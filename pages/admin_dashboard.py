@@ -79,10 +79,10 @@ def show_overview(today):
 
         rows.append({
             "Shop": shop,
-            "Sales ₹": this_month,
-            "Expenses ₹": total_exp,
-            "Profit/Loss ₹": profit,
-            "vs Last Month ₹": change,
+            "Sales": this_month,
+            "Expenses": total_exp,
+            "Profit/Loss": profit,
+            "vs Last Month": change,
         })
 
     df = pd.DataFrame(rows)
@@ -98,9 +98,10 @@ def show_overview(today):
     st.dataframe(df, use_container_width=True, height=600)
 
     m1, m2, m3 = st.columns(3)
-    m1.metric("Total Sales", f"₹{df[df['Shop']!='TOTAL']['Sales ₹'].sum():,.0f}")
-    m2.metric("Total Expenses", f"₹{df[df['Shop']!='TOTAL']['Expenses ₹'].sum():,.0f}")
-    m3.metric("Total Profit", f"₹{df[df['Shop']!='TOTAL']['Profit/Loss ₹'].sum():,.0f}")
+    total_sales = df[df['Shop']!='TOTAL']['Sales Rs'].sum() if 'Sales Rs' in df.columns else 0
+    m1.metric("Total Sales", f"Rs {df[df['Shop']!='TOTAL']['Sales'].sum():,.0f}")
+    m2.metric("Total Expenses", f"Rs {df[df['Shop']!='TOTAL']['Expenses'].sum():,.0f}")
+    m3.metric("Total Profit", f"Rs {df[df['Shop']!='TOTAL']['Profit/Loss'].sum():,.0f}")
 
 
 def show_all_stock():
