@@ -100,7 +100,7 @@ def show_overview(today):
             return 'color: green' if val >= 0 else 'color: red'
         return ''
 
-    styled = df.style.applymap(color_profit, subset=["Profit/Loss ₹", "vs Last Month ₹"])
+    styled = df.style.map(color_profit, subset=["Profit/Loss ₹", "vs Last Month ₹"])
     st.dataframe(styled, use_container_width=True, height=600)
 
     m1, m2, m3 = st.columns(3)
