@@ -2,9 +2,6 @@ import streamlit as st
 from datetime import date, datetime
 import calendar
 
-if not st.session_state.get("user"):
-    st.error("🔒 Access denied. Please login via the main app.")
-    st.stop()
     
 from database import (
     get_staff, add_staff, mark_attendance, get_attendance, get_monthly_salary,
@@ -17,6 +14,10 @@ from database import (
 )
 
 def show():
+    if not st.session_state.get("user"):
+        st.error("🔒 Access denied. Please login via the main app.")
+        st.stop()
+    
     shop = st.session_state.shop_name
 
     st.sidebar.markdown(f"### 🌿 {shop}")
