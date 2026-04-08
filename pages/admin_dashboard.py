@@ -2,10 +2,6 @@ import streamlit as st
 from datetime import date, datetime
 import calendar
 
-import streamlit as st
-if not st.session_state.get("user") or st.session_state.get("role") != "admin":
-    st.error("🔒 Access denied. Please login via the main app.")
-    st.stop()
     
 from database import (
     get_all_stock, get_all_shops_monthly_sales, get_monthly_sales,
@@ -16,6 +12,11 @@ from database import (
 from pdf_generator import generate_restock_pdf
 
 def show():
+    import streamlit as st
+    if not st.session_state.get("user") or st.session_state.get("role") != "admin":
+        st.error("🔒 Access denied. Please login via the main app.")
+        st.stop()
+    
     st.sidebar.markdown("### 🌿 Admin Panel")
     st.sidebar.markdown("*All Shops View*")
 
