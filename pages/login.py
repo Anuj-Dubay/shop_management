@@ -1,9 +1,7 @@
 import streamlit as st
 from database import authenticate
 
-if st.session_state.get("user"):
-    st.info("Already logged in.")
-    st.stop()
+
     
 def show():
     st.markdown("""

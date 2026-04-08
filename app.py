@@ -12,8 +12,8 @@ def main():
     if "user" not in st.session_state:
         st.session_state.user = None
         st.session_state.role = None
-        st.session_state.shop_id = None
-
+        st.session_state.shop_name = None
+        
     if st.session_state.user is None:
         login_page.show()
     elif st.session_state.role == "admin":
