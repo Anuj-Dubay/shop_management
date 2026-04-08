@@ -95,13 +95,7 @@ def show_overview(today):
     }])
     df = pd.concat([df, total_row], ignore_index=True)
 
-    def color_profit(val):
-        if isinstance(val, (int, float)):
-            return 'color: green' if val >= 0 else 'color: red'
-        return ''
-
-    styled = df.style.map(color_profit, subset=["Profit/Loss ₹", "vs Last Month ₹"])
-    st.dataframe(styled, use_container_width=True, height=600)
+    st.dataframe(df, use_container_width=True, height=600)
 
     m1, m2, m3 = st.columns(3)
     m1.metric("Total Sales", f"₹{df[df['Shop']!='TOTAL']['Sales ₹'].sum():,.0f}")
