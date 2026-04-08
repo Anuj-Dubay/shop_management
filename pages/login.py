@@ -1,6 +1,10 @@
 import streamlit as st
 from database import authenticate
 
+if st.session_state.get("user"):
+    st.info("Already logged in.")
+    st.stop()
+    
 def show():
     st.markdown("""
     <div style='text-align:center; padding: 2rem 0 1rem 0;'>

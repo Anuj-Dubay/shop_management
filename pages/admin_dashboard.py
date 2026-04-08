@@ -1,6 +1,12 @@
 import streamlit as st
 from datetime import date, datetime
 import calendar
+
+import streamlit as st
+if not st.session_state.get("user") or st.session_state.get("role") != "admin":
+    st.error("🔒 Access denied. Please login via the main app.")
+    st.stop()
+    
 from database import (
     get_all_stock, get_all_shops_monthly_sales, get_monthly_sales,
     get_monthly_expenses, get_pending_orders, fulfill_order,
