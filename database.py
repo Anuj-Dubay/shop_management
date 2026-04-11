@@ -101,6 +101,8 @@ def init_db():
         item_name TEXT NOT NULL,
         quantity REAL NOT NULL,
         order_date TEXT NOT NULL,
+        order_time TEXT,
+        window_type TEXT DEFAULT "day",
         fulfilled INTEGER DEFAULT 0,
         fulfilled_date TEXT
     )''')
@@ -140,6 +142,7 @@ def init_db():
         username TEXT UNIQUE NOT NULL,
         password TEXT NOT NULL,
         display_name TEXT NOT NULL,
+        staff_id INTEGER,
         is_active INTEGER DEFAULT 1
     )''')
 
@@ -455,15 +458,18 @@ def get_all_stock():
     return rows
 
 # ── Restock Orders ─────────────────────────────────────
-def place_restock_order(shop_name, items_dict):
+def place_restock_order(shop_name, items_dict, window_type="day"):
     """items_dict: {item_name: quantity}"""
     conn = get_connection()
     c = conn.cursor()
+    from datetime import datetime as dt
+    now = dt.now().isoformat()
     today = str(date.today())
     for item, qty in items_dict.items():
         if qty and float(qty) > 0:
-            c.execute("INSERT INTO restock_orders (shop_name, item_name, quantity, order_date) VALUES (?,?,?,?)",
-                      (shop_name, item, float(qty), today))
+            c.execute("""INSERT INTO restock_orders (shop_name, item_name, quantity, order_date, order_time, window_type)
+                         VALUES (?,?,?,?,?,?)""",
+                      (shop_name, item, float(qty), today, now, window_type))
     conn.commit()
     conn.close()
 
@@ -512,23 +518,101 @@ def get_monthly_expenses(shop_name, month, year):
 
 # ── Order Time Window ──────────────────────────────────
 def is_order_window_open():
-    """Orders allowed: 10:00-18:30 or 00:00-05:00"""
+    """Returns (is_open, window_type) where window_type is 'day', 'night', or None"""
     from datetime import datetime
     now = datetime.now()
-    h, m = now.hour, now.minute
-    current = h * 60 + m
-    morning_start = 10 * 60      # 10:00
-    morning_end   = 18 * 60 + 30 # 18:30
-    night_start   = 0            # 00:00
-    night_end     = 5 * 60       # 05:00
-    return (morning_start <= current <= morning_end) or (night_start <= current <= night_end)
+    current = now.hour * 60 + now.minute
+    day_start   = 10 * 60       # 10:00
+    day_end     = 18 * 60 + 40  # 18:40
+    night_start = 0             # 00:00
+    night_end   = 4 * 60        # 04:00
+    if day_start <= current <= day_end:
+        return (True, "day")
+    if night_start <= current <= night_end:
+        return (True, "night")
+    return (False, None)
 
 def next_window_time():
     from datetime import datetime
     now = datetime.now()
     h = now.hour
-    if 5 < h < 10:
+    if 4 < h < 10:
         return "10:00 AM"
-    if h >= 19 or h < 5:
-        return "10:00 AM (tomorrow)" if h >= 19 else "10:00 AM"
+    if h > 18:
+        return "12:00 AM (midnight)"
     return "10:00 AM"
+
+# ── User Management ────────────────────────────────────
+def get_all_users():
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM users WHERE role='shop' ORDER BY shop_name")
+    rows = [dict(r) for r in c.fetchall()]
+    conn.close()
+    return rows
+
+def update_user_password(username, new_password):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("UPDATE users SET password=? WHERE username=?", (new_password, username))
+    conn.commit()
+    conn.close()
+
+def get_pending_orders_filtered(date_from=None, date_to=None, window_type=None, merge_duplicates=True):
+    """Get pending orders with optional filters. Merge duplicates by default."""
+    conn = get_connection()
+    c = conn.cursor()
+    query = "SELECT * FROM restock_orders WHERE fulfilled=0"
+    params = []
+    if date_from:
+        query += " AND order_date >= ?"
+        params.append(str(date_from))
+    if date_to:
+        query += " AND order_date <= ?"
+        params.append(str(date_to))
+    if window_type:
+        query += " AND window_type=?"
+        params.append(window_type)
+    query += " ORDER BY order_date DESC, shop_name"
+    c.execute(query, params)
+    rows = [dict(r) for r in c.fetchall()]
+    conn.close()
+
+    if not merge_duplicates:
+        return rows
+
+    # Merge duplicates: same shop + same item → sum quantities, keep latest id
+    merged = {}
+    for r in rows:
+        key = (r['shop_name'], r['item_name'])
+        if key in merged:
+            merged[key]['quantity'] += r['quantity']
+            merged[key]['_ids'].append(r['id'])
+        else:
+            merged[key] = dict(r)
+            merged[key]['_ids'] = [r['id']]
+    return list(merged.values())
+
+def fulfill_orders_bulk(ids, shop_name, item_name, quantity, item_type):
+    """Fulfill multiple order IDs at once (for merged duplicates)"""
+    conn = get_connection()
+    c = conn.cursor()
+    from datetime import datetime as dt
+    now = dt.now().isoformat()
+    for oid in ids:
+        c.execute("UPDATE restock_orders SET fulfilled=1, fulfilled_date=? WHERE id=?", (now, oid))
+    # Update stock once with total quantity
+    c.execute("""INSERT INTO stock (shop_name, item_name, quantity, item_type, updated_at)
+                 VALUES (?,?,?,?,?)
+                 ON CONFLICT(shop_name, item_name) DO UPDATE SET
+                 quantity=quantity+excluded.quantity, updated_at=excluded.updated_at""",
+              (shop_name, item_name, quantity, item_type, now))
+    conn.commit()
+    conn.close()
+
+def link_subuser_to_staff(username, staff_id):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("UPDATE sub_users SET staff_id=? WHERE username=?", (staff_id, username))
+    conn.commit()
+    conn.close()
