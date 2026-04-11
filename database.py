@@ -616,3 +616,104 @@ def link_subuser_to_staff(username, staff_id):
     c.execute("UPDATE sub_users SET staff_id=? WHERE username=?", (staff_id, username))
     conn.commit()
     conn.close()
+
+# ── Supply Tracking (Admin) ────────────────────────────
+# Admin records what they supplied to each shop per category
+# with cost and profit % → calculates expected vs actual revenue
+
+SUPPLY_CATEGORIES = [
+    ("Godown / Home (Sweets)", 55.0),
+    ("Market Items",           18.0),
+    ("Paan",                   50.0),
+    ("Cigarettes",             12.0),
+    ("Other",                  20.0),
+]
+
+def init_supply_tables():
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS supply_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        shop_name TEXT NOT NULL,
+        supply_date TEXT NOT NULL,
+        category TEXT NOT NULL,
+        cost_amount REAL NOT NULL,
+        profit_percent REAL NOT NULL,
+        expected_revenue REAL NOT NULL,
+        note TEXT,
+        created_at TEXT NOT NULL
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS category_profit_settings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        category TEXT UNIQUE NOT NULL,
+        profit_percent REAL NOT NULL DEFAULT 20.0
+    )''')
+    # Seed default profit %
+    for cat, pct in SUPPLY_CATEGORIES:
+        try:
+            c.execute("INSERT INTO category_profit_settings (category, profit_percent) VALUES (?,?)", (cat, pct))
+        except:
+            pass
+    conn.commit()
+    conn.close()
+
+def get_profit_settings():
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM category_profit_settings ORDER BY category")
+    rows = [dict(r) for r in c.fetchall()]
+    conn.close()
+    return rows
+
+def update_profit_setting(category, profit_percent):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("""INSERT INTO category_profit_settings (category, profit_percent) VALUES (?,?)
+                 ON CONFLICT(category) DO UPDATE SET profit_percent=excluded.profit_percent""",
+              (category, profit_percent))
+    conn.commit()
+    conn.close()
+
+def add_supply(shop_name, supply_date, category, cost_amount, profit_percent, note=""):
+    expected = cost_amount * (1 + profit_percent / 100)
+    conn = get_connection()
+    c = conn.cursor()
+    from datetime import datetime as dt
+    c.execute("""INSERT INTO supply_log (shop_name, supply_date, category, cost_amount,
+                 profit_percent, expected_revenue, note, created_at)
+                 VALUES (?,?,?,?,?,?,?,?)""",
+              (shop_name, str(supply_date), category, cost_amount,
+               profit_percent, round(expected, 2), note, dt.now().isoformat()))
+    conn.commit()
+    conn.close()
+
+def get_monthly_supply(shop_name, month, year):
+    conn = get_connection()
+    c = conn.cursor()
+    month_str = f"{year}-{month:02d}"
+    c.execute("""SELECT * FROM supply_log WHERE shop_name=? AND supply_date LIKE ?
+                 ORDER BY supply_date, category""",
+              (shop_name, month_str + "%"))
+    rows = [dict(r) for r in c.fetchall()]
+    conn.close()
+    return rows
+
+def get_all_shops_monthly_supply(month, year):
+    conn = get_connection()
+    c = conn.cursor()
+    month_str = f"{year}-{month:02d}"
+    c.execute("""SELECT shop_name,
+                 SUM(cost_amount) as total_cost,
+                 SUM(expected_revenue) as total_expected
+                 FROM supply_log WHERE supply_date LIKE ?
+                 GROUP BY shop_name""", (month_str + "%",))
+    rows = {r['shop_name']: dict(r) for r in c.fetchall()}
+    conn.close()
+    return rows
+
+def delete_supply(supply_id):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("DELETE FROM supply_log WHERE id=?", (supply_id,))
+    conn.commit()
+    conn.close()

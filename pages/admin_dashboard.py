@@ -2,6 +2,9 @@ import streamlit as st
 from datetime import date, datetime
 import calendar
 from database import (
+    add_supply, get_monthly_supply, get_all_shops_monthly_supply,
+    get_profit_settings, update_profit_setting, delete_supply,
+    SUPPLY_CATEGORIES,
     get_all_stock, get_all_shops_monthly_sales, get_monthly_sales,
     get_monthly_expenses, get_pending_orders_filtered, fulfill_orders_bulk,
     get_all_staff, get_monthly_salary, get_advances,
@@ -28,6 +31,7 @@ def show():
         "📄 Generate PDF",
         "📅 Monthly Report",
         "📈 Graphs",
+        "💼 My Supply & Costs",
     ])
     if st.sidebar.button("🚪 Logout"):
         for k in ["user","role","shop_name"]: st.session_state[k] = None
@@ -42,6 +46,7 @@ def show():
     elif page == "📄 Generate PDF":         show_pdf(today)
     elif page == "📅 Monthly Report":       show_monthly_report(today)
     elif page == "📈 Graphs":               show_graphs(today)
+    elif page == "💼 My Supply & Costs":    show_supply(today)
 
 
 # ── Overview ───────────────────────────────────────────
@@ -462,3 +467,156 @@ def show_graphs(today):
     df['Growth'] = df['This Month'] - df['Last Month']
     st.subheader("Growth vs Last Month")
     st.bar_chart(df.sort_values('Growth', ascending=False).set_index('Shop')['Growth'])
+
+
+# ── My Supply & Costs ──────────────────────────────────
+def show_supply(today):
+    st.title("💼 My Supply & Costs")
+
+    tab1, tab2, tab3 = st.tabs([
+        "➕ Add Supply",
+        "📊 Shop-wise Report",
+        "⚙️ Profit % Settings"
+    ])
+
+    with tab1:
+        st.subheader("Record what you supplied to a shop")
+        settings = get_profit_settings()
+        pct_map = {s['category']: s['profit_percent'] for s in settings}
+
+        with st.form("supply_form"):
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                sel_shop = st.selectbox("Shop", SHOPS)
+            with c2:
+                sup_date = st.date_input("Date", value=today)
+            with c3:
+                category = st.selectbox("Category", [c for c, _ in SUPPLY_CATEGORIES])
+
+            profit_pct = pct_map.get(category, 20.0)
+            st.caption(f"Profit % for this category: **{profit_pct}%** (change in Settings tab)")
+
+            c1, c2 = st.columns(2)
+            with c1:
+                cost = st.number_input("Your Cost / खर्च (Rs)", min_value=0.0, step=10.0)
+            with c2:
+                expected = cost * (1 + profit_pct / 100)
+                st.metric("Expected Revenue", f"Rs {expected:,.0f}")
+
+            note = st.text_input("Note (optional)")
+
+            if st.form_submit_button("Add Supply", use_container_width=True):
+                if cost > 0:
+                    add_supply(sel_shop, sup_date, category, cost, profit_pct, note)
+                    st.success(f"✅ Added! Cost: Rs {cost:,.0f} → Expected: Rs {expected:,.0f}")
+                else:
+                    st.warning("Enter cost amount.")
+
+        st.divider()
+        st.subheader("Recent Supply Log")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            view_shop = st.selectbox("Shop", ["All"] + SHOPS, key="vs")
+        with c2:
+            view_month = st.selectbox("Month", range(1,13), index=today.month-1,
+                                       format_func=lambda m: datetime(2000,m,1).strftime("%B"), key="vm")
+        with c3:
+            view_year = st.selectbox("Year", [today.year-1, today.year], index=1, key="vy")
+
+        shops_to_show = SHOPS if view_shop == "All" else [view_shop]
+        import pandas as pd
+        all_rows = []
+        for shop in shops_to_show:
+            rows = get_monthly_supply(shop, view_month, view_year)
+            for r in rows:
+                r['shop'] = shop
+                all_rows.append(r)
+
+        if all_rows:
+            df = pd.DataFrame(all_rows)[['shop','supply_date','category','cost_amount','profit_percent','expected_revenue','note']]
+            df.columns = ['Shop','Date','Category','Cost Rs','Profit %','Expected Rs','Note']
+            st.dataframe(df, use_container_width=True)
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Total Cost",     f"Rs {df['Cost Rs'].sum():,.0f}")
+            c2.metric("Total Expected", f"Rs {df['Expected Rs'].sum():,.0f}")
+            c3.metric("Expected Profit",f"Rs {df['Expected Rs'].sum() - df['Cost Rs'].sum():,.0f}")
+        else:
+            st.info("No supply records for this period.")
+
+    with tab2:
+        st.subheader("Shop-wise Supply vs Actual Sales")
+        c1, c2 = st.columns(2)
+        with c1:
+            rep_month = st.selectbox("Month", range(1,13), index=today.month-1,
+                                      format_func=lambda m: datetime(2000,m,1).strftime("%B"), key="rm")
+        with c2:
+            rep_year = st.selectbox("Year", [today.year-1, today.year], index=1, key="ry")
+
+        supply_data = get_all_shops_monthly_supply(rep_month, rep_year)
+        sales_data  = get_all_shops_monthly_sales(rep_month, rep_year)
+
+        import pandas as pd
+        rows = []
+        for shop in SHOPS:
+            sup  = supply_data.get(shop, {})
+            cost = sup.get('total_cost', 0) or 0
+            exp  = sup.get('total_expected', 0) or 0
+            actual = sales_data.get(shop, 0) or 0
+            if cost > 0 or actual > 0:
+                rows.append({
+                    "Shop": shop,
+                    "My Cost Rs": cost,
+                    "Expected Revenue Rs": exp,
+                    "Actual Sales Rs": actual,
+                    "Gap Rs": actual - exp,
+                })
+
+        if rows:
+            df = pd.DataFrame(rows)
+            st.dataframe(df, use_container_width=True)
+
+            c1,c2,c3,c4 = st.columns(4)
+            c1.metric("Total Cost",     f"Rs {df['My Cost Rs'].sum():,.0f}")
+            c2.metric("Expected",       f"Rs {df['Expected Revenue Rs'].sum():,.0f}")
+            c3.metric("Actual Sales",   f"Rs {df['Actual Sales Rs'].sum():,.0f}")
+            gap = df['Actual Sales Rs'].sum() - df['Expected Revenue Rs'].sum()
+            c4.metric("Gap", f"Rs {gap:,.0f}",
+                      help="Positive = shops earned more than expected. Negative = shortfall.")
+
+            st.divider()
+            st.subheader("Category Breakdown")
+            # Show per-category totals for selected month
+            all_supply = []
+            for shop in SHOPS:
+                rows2 = get_monthly_supply(shop, rep_month, rep_year)
+                all_supply.extend(rows2)
+            if all_supply:
+                df2 = pd.DataFrame(all_supply)
+                cat_summary = df2.groupby('category').agg(
+                    Cost=('cost_amount','sum'),
+                    Expected=('expected_revenue','sum')
+                ).reset_index()
+                cat_summary['Profit'] = cat_summary['Expected'] - cat_summary['Cost']
+                st.dataframe(cat_summary, use_container_width=True)
+        else:
+            st.info("No supply data for this period.")
+
+    with tab3:
+        st.subheader("Profit % per Category")
+        st.info("Set your expected profit margin for each category. This auto-fills when you add supply.")
+        settings = get_profit_settings()
+
+        with st.form("profit_settings"):
+            new_vals = {}
+            for s in settings:
+                new_vals[s['category']] = st.number_input(
+                    s['category'], min_value=0.0, max_value=200.0,
+                    value=float(s['profit_percent']), step=1.0,
+                    key=f"ps_{s['category']}"
+                )
+            if st.form_submit_button("Save Settings", use_container_width=True):
+                for cat, pct in new_vals.items():
+                    update_profit_setting(cat, pct)
+                st.success("✅ Profit settings saved!")
+                st.rerun()
