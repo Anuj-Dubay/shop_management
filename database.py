@@ -852,3 +852,104 @@ def get_all_shops_stock_status():
         else:
             results[shop] = 'good'
     return results
+
+# ── Item Management ────────────────────────────────────
+def init_item_tables():
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS custom_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        item_name TEXT UNIQUE NOT NULL,
+        category TEXT NOT NULL,
+        price REAL DEFAULT 0,
+        is_active INTEGER DEFAULT 1,
+        added_at TEXT NOT NULL
+    )''')
+    conn.commit()
+    conn.close()
+
+def get_all_items_managed():
+    """Returns all items (built-in + custom) with active status"""
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM custom_items ORDER BY category, item_name")
+    custom = [dict(r) for r in c.fetchall()]
+    conn.close()
+    return custom
+
+def add_custom_item(item_name, category, price=0):
+    from datetime import datetime as dt
+    conn = get_connection()
+    c = conn.cursor()
+    try:
+        c.execute("INSERT INTO custom_items (item_name, category, price, is_active, added_at) VALUES (?,?,?,1,?)",
+                  (item_name.strip(), category, price, dt.now().isoformat()))
+        conn.commit()
+        conn.close()
+        return True
+    except:
+        conn.close()
+        return False
+
+def toggle_item_active(item_name, active):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("UPDATE custom_items SET is_active=? WHERE item_name=?", (1 if active else 0, item_name))
+    conn.commit()
+    conn.close()
+
+def get_active_items_by_category():
+    """Returns merged built-in + custom active items per category"""
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT item_name, category, price FROM custom_items WHERE is_active=1")
+    custom = [dict(r) for r in c.fetchall()]
+    conn.close()
+
+    # Start with built-ins
+    result = {
+        'godown':     list(GODOWN_ITEMS),
+        'paan':       list(PAAN_ITEMS),
+        'market':     list(MARKET_ITEMS.keys()),
+        'morning':    ['टिन', 'टिन / मसाला', 'पार्सल कवर', 'कथा'],
+    }
+    prices = dict(MARKET_ITEMS)
+
+    # Add custom items
+    for item in custom:
+        cat = item['category']
+        if cat in result and item['item_name'] not in result[cat]:
+            result[cat].append(item['item_name'])
+        if item['price'] > 0:
+            prices[item['item_name']] = item['price']
+
+    return result, prices
+
+# ── Admin User Management ──────────────────────────────
+def get_admin_users():
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM users WHERE role='admin' ORDER BY username")
+    rows = [dict(r) for r in c.fetchall()]
+    conn.close()
+    return rows
+
+def add_admin_user(username, password, display_name=""):
+    conn = get_connection()
+    c = conn.cursor()
+    try:
+        c.execute("INSERT INTO users (username, password, role, shop_name) VALUES (?,?,?,?)",
+                  (username.strip(), password, 'admin', display_name or None))
+        conn.commit()
+        conn.close()
+        return True
+    except:
+        conn.close()
+        return False
+
+def deactivate_user(username):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("UPDATE users SET password=? WHERE username=?", ("__DISABLED__", username))
+    conn.commit()
+    conn.close()

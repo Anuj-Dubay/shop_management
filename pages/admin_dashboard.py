@@ -2,6 +2,8 @@ import streamlit as st
 from datetime import date, datetime
 import calendar
 from database import (
+    add_custom_item, get_all_items_managed, toggle_item_active,
+    get_admin_users, add_admin_user, deactivate_user,
     add_supply, get_monthly_supply, get_all_shops_monthly_supply,
     get_profit_settings, update_profit_setting, delete_supply,
     get_all_shops_stock_status, get_approx_stock,
@@ -34,6 +36,8 @@ def show():
         "📈 Graphs",
         "💼 My Supply & Costs",
         "🏪 Shop Progress",
+        "📦 Manage Items",
+        "👑 Admin Users",
     ])
     if st.sidebar.button("🚪 Logout"):
         for k in ["user","role","shop_name"]: st.session_state[k] = None
@@ -50,6 +54,8 @@ def show():
     elif page == "📈 Graphs":               show_graphs(today)
     elif page == "💼 My Supply & Costs":    show_supply(today)
     elif page == "🏪 Shop Progress":           show_shop_progress()
+    elif page == "📦 Manage Items":              show_manage_items()
+    elif page == "👑 Admin Users":               show_admin_users()
 
 
 # ── Overview ───────────────────────────────────────────
@@ -703,3 +709,116 @@ def show_shop_progress():
         st.dataframe(df, use_container_width=True)
     else:
         st.info("No stock data for this shop.")
+
+
+# ── Manage Items ───────────────────────────────────────
+def show_manage_items():
+    st.title("📦 Manage Items")
+    st.caption("Add new items or disable old ones. Changes apply to all shops.")
+
+    CATEGORIES = [
+        ('godown',  '🟢 Godown Items'),
+        ('paan',    '🟤 Paan Items'),
+        ('market',  '🔵 Market Items'),
+        ('morning', '⬛ Morning Items (Tin/Cover/Katha)'),
+    ]
+
+    tab1, tab2 = st.tabs(["➕ Add Item", "📋 View / Disable"])
+
+    with tab1:
+        with st.form("add_item_form"):
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                item_name = st.text_input("Item Name / आइटम का नाम")
+            with c2:
+                category  = st.selectbox("Category", [c[0] for c in CATEGORIES],
+                                          format_func=lambda x: next(c[1] for c in CATEGORIES if c[0]==x))
+            with c3:
+                price = st.number_input("Price Rs (0 if unknown)", min_value=0.0, step=10.0)
+
+            if st.form_submit_button("Add Item", use_container_width=True):
+                if item_name.strip():
+                    ok = add_custom_item(item_name, category, price)
+                    if ok:
+                        st.success(f"✅ '{item_name}' added to {category}!")
+                    else:
+                        st.error("Item already exists.")
+                else:
+                    st.warning("Enter item name.")
+
+    with tab2:
+        items = get_all_items_managed()
+        if not items:
+            st.info("No custom items added yet. Built-in items cannot be disabled here — add items above.")
+            return
+
+        for cat_key, cat_label in CATEGORIES:
+            cat_items = [i for i in items if i['category'] == cat_key]
+            if not cat_items:
+                continue
+            st.subheader(cat_label)
+            for item in cat_items:
+                c1, c2, c3 = st.columns([3, 2, 1])
+                with c1:
+                    st.write(f"**{item['item_name']}**")
+                with c2:
+                    if item['price'] > 0:
+                        st.caption(f"Rs {item['price']:,.0f}")
+                with c3:
+                    active = bool(item['is_active'])
+                    new_state = st.checkbox("Active", value=active, key=f"itm_{item['id']}")
+                    if new_state != active:
+                        toggle_item_active(item['item_name'], new_state)
+                        st.rerun()
+
+
+# ── Admin Users ────────────────────────────────────────
+def show_admin_users():
+    st.title("👑 Admin Users")
+    st.caption("Add your brothers, dad — anyone who needs full admin access.")
+
+    admins = get_admin_users()
+
+    st.subheader("Current Admins")
+    for a in admins:
+        disabled = a['password'] == '__DISABLED__'
+        with st.expander(f"{'❌' if disabled else '✅'} {a['username']} {'(disabled)' if disabled else ''}"):
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                new_pass = st.text_input("New Password", type="password", key=f"ap_{a['username']}")
+            with c2:
+                st.write("")
+                st.write("")
+                if st.button("Update Password", key=f"apb_{a['username']}"):
+                    if new_pass:
+                        from database import update_user_password
+                        update_user_password(a['username'], new_pass)
+                        st.success("Updated!")
+            with c3:
+                st.write("")
+                st.write("")
+                if a['username'] != 'admin' and not disabled:
+                    if st.button("Disable", key=f"apd_{a['username']}"):
+                        deactivate_user(a['username'])
+                        st.warning(f"{a['username']} disabled.")
+                        st.rerun()
+
+    st.divider()
+    st.subheader("Add New Admin")
+    with st.form("new_admin_form"):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            uname = st.text_input("Username (for login)")
+        with c2:
+            upass = st.text_input("Password", type="password")
+        with c3:
+            dname = st.text_input("Name (e.g. Bhai, Papa)")
+        if st.form_submit_button("Add Admin", use_container_width=True):
+            if uname and upass:
+                ok = add_admin_user(uname, upass, dname)
+                if ok:
+                    st.success(f"✅ {uname} added as admin! They can login now.")
+                else:
+                    st.error("Username already taken.")
+            else:
+                st.warning("Username and password required.")
