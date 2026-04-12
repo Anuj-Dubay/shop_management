@@ -8,7 +8,8 @@ from database import (
     mark_attendance, get_attendance,
     get_monthly_salary, get_staff,
     is_order_window_open, next_window_time,
-    LOCAL_ITEMS, MARKET_ITEMS
+    save_daily_usage, get_approx_stock,
+    PAAN_ITEMS, GODOWN_ITEMS, LOCAL_ITEMS, MARKET_ITEMS, ALL_ITEMS
 )
 
 def show():
@@ -28,6 +29,7 @@ def show():
         "📦 My Stock / मेरा स्टॉक",
         "🔄 Order Restock / ऑर्डर",
         "💸 Expenses / खर्च",
+        "📉 Daily Usage / रोज़ का उपयोग",
     ]
     if role == "subuser":
         menu.append("📅 My Attendance / हाज़िरी")
@@ -51,6 +53,8 @@ def show():
         show_restock(shop, today)
     elif page == "💸 Expenses / खर्च":
         show_expenses(shop, today)
+    elif page == "📉 Daily Usage / रोज़ का उपयोग":
+        show_usage(shop, today)
     elif page == "📅 My Attendance / हाज़िरी":
         show_my_attendance(shop, today)
 
@@ -285,3 +289,69 @@ def show_my_attendance(shop, today):
     if sal['advances'] > 0:
         st.metric("Advance Taken", f"Rs {sal['advances']:,.0f}")
         st.metric("Net Payable", f"Rs {sal['net_payable']:,.0f}")
+
+
+def show_usage(shop, today):
+    st.title("📉 Daily Usage / रोज़ का उपयोग")
+    st.caption("Before leaving — enter how much of each item you used today")
+
+    stock = get_stock(shop)
+    stock_dict = {s['item_name']: s['quantity'] for s in stock}
+
+    if not stock_dict:
+        st.warning("Set your initial stock first in 📦 My Stock.")
+        return
+
+    with st.form("usage_form"):
+        usage_date = st.date_input("Date / तारीख", value=today)
+
+        st.write("**पान आइटम / Paan Items**")
+        usage = {}
+        paan_in_stock = [(item, stock_dict[item]) for item in PAAN_ITEMS if item in stock_dict]
+        if paan_in_stock:
+            cols = st.columns(3)
+            for i, (item, curr) in enumerate(paan_in_stock):
+                with cols[i%3]:
+                    usage[item] = st.number_input(
+                        f"{item} (have {curr:.0f})",
+                        min_value=0.0, max_value=float(curr), step=1.0, key=f"u_p_{item}")
+        else:
+            st.caption("No paan items in stock")
+
+        st.write("**गोदाम आइटम / Godown Items**")
+        godown_in_stock = [(item, stock_dict[item]) for item in GODOWN_ITEMS if item in stock_dict]
+        if godown_in_stock:
+            cols2 = st.columns(3)
+            for i, (item, curr) in enumerate(godown_in_stock):
+                with cols2[i%3]:
+                    usage[item] = st.number_input(
+                        f"{item} (have {curr:.0f})",
+                        min_value=0.0, max_value=float(curr), step=1.0, key=f"u_g_{item}")
+
+        st.write("**मार्केट आइटम / Market Items**")
+        mkt_in_stock = [(item, stock_dict[item]) for item in MARKET_ITEMS.keys() if item in stock_dict]
+        if mkt_in_stock:
+            cols3 = st.columns(3)
+            for i, (item, curr) in enumerate(mkt_in_stock):
+                with cols3[i%3]:
+                    usage[item] = st.number_input(
+                        f"{item} (have {curr:.0f})",
+                        min_value=0.0, max_value=float(curr), step=1.0, key=f"u_m_{item}")
+
+        if st.form_submit_button("💾 Save Usage / सेव करें", use_container_width=True):
+            non_zero = {k: v for k, v in usage.items() if v > 0}
+            if non_zero:
+                save_daily_usage(shop, usage_date, non_zero)
+                st.success(f"✅ Usage saved for {len(non_zero)} items!")
+            else:
+                st.warning("Enter at least one item usage.")
+
+    st.divider()
+    st.subheader("Approx Current Stock / अनुमानित स्टॉक")
+    approx = get_approx_stock(shop)
+    if approx:
+        for s in approx:
+            icon = "🟢" if s['status']=='good' else ("🟡" if s['status']=='medium' else ("🔴" if s['status']=='out' else "⚪"))
+            st.write(f"{icon} **{s['item']}** — ~{s['remaining']:.0f} remaining (used {s['used']:.0f} of {s['stocked']:.0f})")
+    else:
+        st.info("Set initial stock to see estimates.")

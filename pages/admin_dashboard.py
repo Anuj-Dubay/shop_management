@@ -4,7 +4,8 @@ import calendar
 from database import (
     add_supply, get_monthly_supply, get_all_shops_monthly_supply,
     get_profit_settings, update_profit_setting, delete_supply,
-    SUPPLY_CATEGORIES,
+    get_all_shops_stock_status, get_approx_stock,
+    SUPPLY_CATEGORIES, PAAN_ITEMS, GODOWN_ITEMS,
     get_all_stock, get_all_shops_monthly_sales, get_monthly_sales,
     get_monthly_expenses, get_pending_orders_filtered, fulfill_orders_bulk,
     get_all_staff, get_monthly_salary, get_advances,
@@ -32,6 +33,7 @@ def show():
         "📅 Monthly Report",
         "📈 Graphs",
         "💼 My Supply & Costs",
+        "🏪 Shop Progress",
     ])
     if st.sidebar.button("🚪 Logout"):
         for k in ["user","role","shop_name"]: st.session_state[k] = None
@@ -47,6 +49,7 @@ def show():
     elif page == "📅 Monthly Report":       show_monthly_report(today)
     elif page == "📈 Graphs":               show_graphs(today)
     elif page == "💼 My Supply & Costs":    show_supply(today)
+    elif page == "🏪 Shop Progress":           show_shop_progress()
 
 
 # ── Overview ───────────────────────────────────────────
@@ -480,37 +483,42 @@ def show_supply(today):
     ])
 
     with tab1:
-        st.subheader("Record what you supplied to a shop")
+        st.subheader("Bulk Supply Entry — all shops at once")
         settings = get_profit_settings()
         pct_map = {s['category']: s['profit_percent'] for s in settings}
 
-        with st.form("supply_form"):
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                sel_shop = st.selectbox("Shop", SHOPS)
-            with c2:
-                sup_date = st.date_input("Date", value=today)
-            with c3:
-                category = st.selectbox("Category", [c for c, _ in SUPPLY_CATEGORIES])
+        c1, c2 = st.columns(2)
+        with c1:
+            sup_date = st.date_input("Date", value=today, key="bulk_date")
+        with c2:
+            category = st.selectbox("Category", [c for c, _ in SUPPLY_CATEGORIES], key="bulk_cat")
 
-            profit_pct = pct_map.get(category, 20.0)
-            st.caption(f"Profit % for this category: **{profit_pct}%** (change in Settings tab)")
+        profit_pct = pct_map.get(category, 20.0)
+        st.caption(f"Profit % for **{category}**: {profit_pct}% → Expected = Cost × {1 + profit_pct/100:.2f}")
 
-            c1, c2 = st.columns(2)
-            with c1:
-                cost = st.number_input("Your Cost / खर्च (Rs)", min_value=0.0, step=10.0)
-            with c2:
-                expected = cost * (1 + profit_pct / 100)
-                st.metric("Expected Revenue", f"Rs {expected:,.0f}")
+        with st.form("bulk_supply_form"):
+            st.write(f"**Enter cost supplied to each shop (leave 0 to skip):**")
+            shop_costs = {}
+            cols = st.columns(4)
+            for i, shop in enumerate(SHOPS):
+                with cols[i%4]:
+                    shop_costs[shop] = st.number_input(shop, min_value=0.0, step=10.0, key=f"bs_{shop}")
 
-            note = st.text_input("Note (optional)")
+            note = st.text_input("Note (optional)", key="bulk_note")
 
-            if st.form_submit_button("Add Supply", use_container_width=True):
-                if cost > 0:
-                    add_supply(sel_shop, sup_date, category, cost, profit_pct, note)
-                    st.success(f"✅ Added! Cost: Rs {cost:,.0f} → Expected: Rs {expected:,.0f}")
+            if st.form_submit_button("💾 Save All / सेव करें", use_container_width=True):
+                saved = 0
+                total_cost = 0
+                for shop, cost in shop_costs.items():
+                    if cost > 0:
+                        add_supply(shop, sup_date, category, cost, profit_pct, note)
+                        saved += 1
+                        total_cost += cost
+                if saved:
+                    total_exp = total_cost * (1 + profit_pct/100)
+                    st.success(f"✅ Saved for {saved} shops! Total cost: Rs {total_cost:,.0f} → Expected: Rs {total_exp:,.0f}")
                 else:
-                    st.warning("Enter cost amount.")
+                    st.warning("Enter cost for at least one shop.")
 
         st.divider()
         st.subheader("Recent Supply Log")
@@ -620,3 +628,78 @@ def show_supply(today):
                     update_profit_setting(cat, pct)
                 st.success("✅ Profit settings saved!")
                 st.rerun()
+
+
+# ── Shop Progress Dashboard ────────────────────────────
+def show_shop_progress():
+    st.title("🏪 Shop Progress / दुकान की स्थिति")
+
+    from datetime import datetime as dt
+    today = date.today()
+    m, y = today.month, today.year
+    pm = m-1 if m > 1 else 12
+    py = y if m > 1 else y-1
+
+    sales_this = get_all_shops_monthly_sales(m, y)
+    sales_prev = get_all_shops_monthly_sales(pm, py)
+    supply_data = get_all_shops_monthly_supply(m, y)
+    stock_status = get_all_shops_stock_status()
+
+    st.subheader(f"All Shops — {dt(2000,m,1).strftime('%B')} {y}")
+
+    # CSS for colored tiles
+    st.markdown("""
+    <style>
+    .shop-tile { padding:12px; border-radius:10px; margin:4px; text-align:center; }
+    .tile-green  { background:#1b5e20; color:white; }
+    .tile-yellow { background:#f57f17; color:white; }
+    .tile-red    { background:#b71c1c; color:white; }
+    .tile-gray   { background:#424242; color:white; }
+    </style>
+    """, unsafe_allow_html=True)
+
+    cols = st.columns(4)
+    for i, shop in enumerate(SHOPS):
+        this  = sales_this.get(shop, 0) or 0
+        prev  = sales_prev.get(shop, 0) or 0
+        sup   = supply_data.get(shop, {})
+        exp   = sup.get('total_expected', 0) or 0
+        stock = stock_status.get(shop, 'no_data')
+
+        # Performance color
+        if exp == 0:
+            color = "gray"
+            perf = "No data"
+        elif this >= exp:
+            color = "green"
+            perf = f"✅ Rs {this:,.0f}"
+        elif this >= exp * 0.8:
+            color = "yellow"
+            perf = f"⚠️ Rs {this:,.0f}"
+        else:
+            color = "red"
+            perf = f"❌ Rs {this:,.0f}"
+
+        stock_icon = {"good":"🟢","low":"🟡","out":"🔴","no_data":"⚪"}.get(stock,"⚪")
+
+        with cols[i%4]:
+            st.markdown(f"""
+            <div class="shop-tile tile-{color}">
+                <b>{shop}</b><br>
+                {perf}<br>
+                <small>Exp: Rs {exp:,.0f}</small><br>
+                {stock_icon} Stock
+            </div>
+            """, unsafe_allow_html=True)
+
+    st.divider()
+    st.subheader("Detail View")
+    sel = st.selectbox("Select Shop", SHOPS)
+    approx = get_approx_stock(sel)
+    if approx:
+        import pandas as pd
+        df = pd.DataFrame(approx)[['item','stocked','used','remaining','status']]
+        df['status'] = df['status'].map({'good':'🟢 Good','medium':'🟡 Medium','low':'🟡 Low','out':'🔴 Out','unknown':'⚪ Unknown'})
+        st.dataframe(df, use_container_width=True)
+    else:
+        st.info("No stock data for this shop.")

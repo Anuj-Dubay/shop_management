@@ -9,22 +9,47 @@ SHOPS = ["SAM","IN","KORMANGLA","MG","JAYN","LAM","MJ","RT NAGAR","ARK","RAJN",
          "FT","KTR","WTF","KANKPUR","HASN","DVNH","CHBK","MYRS","VJN","MDR",
          "KOLAR","HSR","KUNIGAL","SLG","KVPN","HOSKT"]
 
-# Items from your existing code
-LOCAL_ITEMS = [
-    'मघई', 'सादा', 'बनारसी', 'मसाला', 'स्पेशल', 'मीठा', 'छोटा', 'बड़ा',
-    'मघई बॉक्स', 'कथा', 'कपडा', 'कप', 'टिशू'
+# ── Item Lists (from order form) ──────────────────────
+
+# Paan items — what shops make paan from
+PAAN_ITEMS = [
+    'कलकत्ता', 'मद्रास', 'बनारस',
 ]
 
+# Market items — bought from market (with prices)
 MARKET_ITEMS = {
-    'टिन': 3500, 'खजूर': 200, 'पार्सल कवर': 240, 'शिव': 700,
-    'चेरी': 280, 'टूथपिक': 125, 'ब्लू बेरी': 230,
+    'कटिंग सुपाड़ी': 0, 'खड़ा सुपाड़ी': 300, 'सकेला': 0,
+    'चिप्स सुपाड़ी': 0, 'केसरी': 0, 'टावर पैकेट': 0,
+    'नौरती चटनी': 0, 'नौरती किमाम': 0, 'नौरंग किमाम': 0,
+    'कश्मीरी किमाम': 0, 'चूना': 0, 'हीरा पत्ता': 0,
+    'बिल्ली': 0, 'शिनाख्ती': 0, 'मीनाक्षी': 0, 'हरीपती': 0,
+    'सौंफ': 0, 'मिक्चर': 0, 'लौंग': 0, 'इलायची': 0,
+    'OO': 0, '00 जीपर': 0, 'ठप्पा': 0, 'चेतना': 0,
+    'रबी': 0, 'लाइटर': 0, '54': 0, '300': 0,
+    '120': 0, '160': 0, 'बड़ा सादा': 0,
+    # Original market items with prices
+    'टूथपिक': 125, 'पार्सल कवर': 240,
     'गुलाब': 200, 'मस्त': 200, 'डार्क': 150, 'सफ़ेद': 210,
-    'मैंगो': 215, 'पिस्ता': 215, 'स्ट्रॉबेरी': 215,
-    'जेली': 250, 'खजूर बॉक्स': 50, 'खड़ा खजूर': 300,
-    'खजूर मसाला': 300, 'अंजीर': 800, 'ड्राय फ्रूट': 800
+    'मैंगो': 215, 'पिस्ता': 215, 'स्ट्रॉबेरी': 215, 'ब्लू बेरी': 230,
+    'जेली': 250, 'खजूर बॉक्स': 50, 'खजूर मसाला': 300,
+    'अंजीर': 800, 'ड्राय फ्रूट': 800,
 }
 
-ALL_ITEMS = LOCAL_ITEMS + list(MARKET_ITEMS.keys())
+# Godown items — supplied from your godown
+GODOWN_ITEMS = [
+    'RMD', 'सादा', 'रजनीगंधा', 'रजनीगंधा टिन', 'रजनीगंधा जिपर',
+    'विमल', 'कमला', 'मधु', 'स्वागत', 'चैनी', 'कुलिप',
+    'टिन / मसाला', 'चेरी', 'खजूर', 'शिवा',
+    'मघई बॉक्स', 'केसर', 'टिशू', 'कप', 'कपड़ा', 'कथा',
+]
+
+# For backward compatibility
+LOCAL_ITEMS = PAAN_ITEMS + GODOWN_ITEMS
+
+ALL_ITEMS = PAAN_ITEMS + GODOWN_ITEMS + list(MARKET_ITEMS.keys())
+
+# Items that show in TIN/KATHA column of PDF
+KEEP_ITEMS_PDF = ['टिन', 'कथा', 'टिन / मसाला']
 
 def get_connection():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -113,6 +138,15 @@ def init_db():
         amount REAL NOT NULL,
         description TEXT,
         date TEXT NOT NULL
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS daily_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        shop_name TEXT NOT NULL,
+        item_name TEXT NOT NULL,
+        quantity_used REAL NOT NULL,
+        usage_date TEXT NOT NULL,
+        UNIQUE(shop_name, item_name, usage_date)
     )''')
 
     # Sales categories with profit margins per shop
@@ -717,3 +751,104 @@ def delete_supply(supply_id):
     c.execute("DELETE FROM supply_log WHERE id=?", (supply_id,))
     conn.commit()
     conn.close()
+
+# ── Daily Usage ────────────────────────────────────────
+def save_daily_usage(shop_name, usage_date, usage_dict):
+    """usage_dict: {item_name: quantity_used}"""
+    conn = get_connection()
+    c = conn.cursor()
+    for item, qty in usage_dict.items():
+        if qty and float(qty) > 0:
+            c.execute("""INSERT OR REPLACE INTO daily_usage
+                         (shop_name, item_name, quantity_used, usage_date)
+                         VALUES (?,?,?,?)""",
+                      (shop_name, item, float(qty), str(usage_date)))
+    conn.commit()
+    conn.close()
+
+def get_usage_since(shop_name, since_date):
+    """Total usage per item since a given date"""
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("""SELECT item_name, SUM(quantity_used) as total_used
+                 FROM daily_usage WHERE shop_name=? AND usage_date >= ?
+                 GROUP BY item_name""", (shop_name, str(since_date)))
+    rows = {r['item_name']: r['total_used'] for r in c.fetchall()}
+    conn.close()
+    return rows
+
+def get_approx_stock(shop_name):
+    """
+    Returns list of {item, stocked_qty, used_qty, approx_remaining, last_restock_date, status}
+    status: 'good' | 'low' | 'out'
+    """
+    from datetime import datetime, timedelta
+    conn = get_connection()
+    c = conn.cursor()
+
+    # Get current stock (set manually or via restock fulfillment)
+    c.execute("SELECT item_name, quantity, updated_at FROM stock WHERE shop_name=?", (shop_name,))
+    stock_rows = {r['item_name']: dict(r) for r in c.fetchall()}
+
+    # Get last restock date per item
+    c.execute("""SELECT item_name, MAX(fulfilled_date) as last_date, SUM(quantity) as restocked
+                 FROM restock_orders WHERE shop_name=? AND fulfilled=1
+                 GROUP BY item_name""", (shop_name,))
+    restock_rows = {r['item_name']: dict(r) for r in c.fetchall()}
+    conn.close()
+
+    results = []
+    for item, stock in stock_rows.items():
+        # Get usage since last restock
+        last_restock = restock_rows.get(item, {}).get('last_date')
+        if last_restock:
+            since = last_restock[:10]  # date part only
+        else:
+            # Use stock updated_at as baseline
+            since = (stock.get('updated_at') or '')[:10] or '2024-01-01'
+
+        usage = get_usage_since(shop_name, since)
+        used = usage.get(item, 0)
+        stocked = stock['quantity']
+        remaining = max(stocked - used, 0)
+
+        # Status
+        if stocked == 0:
+            status = 'unknown'
+        elif remaining <= 0:
+            status = 'out'
+        elif remaining < stocked * 0.2:
+            status = 'low'
+        elif remaining < stocked * 0.5:
+            status = 'medium'
+        else:
+            status = 'good'
+
+        results.append({
+            'item': item,
+            'stocked': stocked,
+            'used': used,
+            'remaining': remaining,
+            'last_restock': last_restock,
+            'status': status,
+        })
+
+    return sorted(results, key=lambda x: x['status'])
+
+def get_all_shops_stock_status():
+    """Quick status per shop — for dashboard tiles"""
+    results = {}
+    for shop in SHOPS:
+        stock = get_approx_stock(shop)
+        if not stock:
+            results[shop] = 'no_data'
+            continue
+        out  = sum(1 for s in stock if s['status'] == 'out')
+        low  = sum(1 for s in stock if s['status'] == 'low')
+        if out > 0:
+            results[shop] = 'out'
+        elif low > 0:
+            results[shop] = 'low'
+        else:
+            results[shop] = 'good'
+    return results
