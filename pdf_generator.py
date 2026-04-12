@@ -7,7 +7,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from io import BytesIO
 from datetime import date
-from database import MARKET_ITEMS, LOCAL_ITEMS, SHOPS
+from database import MARKET_ITEMS, GODOWN_ITEMS, PAAN_ITEMS, SHOPS
 
 try:
     pdfmetrics.registerFont(TTFont('Hindi', '/usr/share/fonts/truetype/freefont/FreeSans.ttf'))
@@ -18,151 +18,175 @@ except:
     FONT = 'Helvetica'
     FONT_BOLD = 'Helvetica-Bold'
 
-TEAL = colors.HexColor('#008080')
-BLUE = colors.HexColor('#1565c0')
-LIGHT_GRAY = colors.HexColor('#f5f5f5')
+TEAL  = colors.HexColor('#00695c')   # dark teal - godown
+GREEN = colors.HexColor('#1565c0')   # blue - market+paan
+BROWN = colors.HexColor('#4e342e')   # brown - morning items
+LIGHT = colors.HexColor('#f5f5f5')
 
-KEEP_ITEMS = ['tin', 'katha', 'टिन', 'कथा']
+# ── Column 3: Morning packing items (Tin, Cover, Masala, Katha) ──
+MORNING_ITEMS = [
+    'टिन', 'टिन / मसाला', 'पार्सल कवर', 'कथा',
+    'tin', 'katha',
+]
 
-def classify_item(item_name):
-    if item_name in KEEP_ITEMS:
-        return 'keep'
-    if item_name in MARKET_ITEMS:
-        return 'market'
-    return 'local'
+def classify(item):
+    if item in MORNING_ITEMS:
+        return 'morning'
+    if item in GODOWN_ITEMS:
+        return 'godown'
+    # Market items and Paan items go together in middle column
+    return 'market_paan'
 
 def generate_restock_pdf(orders, show_costs=True):
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4,
-                             leftMargin=0.8*cm, rightMargin=0.8*cm,
+                             leftMargin=0.7*cm, rightMargin=0.7*cm,
                              topMargin=1.2*cm, bottomMargin=0.8*cm)
     elements = []
 
-    title_s = ParagraphStyle('t', fontName=FONT_BOLD, fontSize=13, spaceAfter=4, alignment=1)
-    date_s  = ParagraphStyle('d', fontName=FONT, fontSize=8, spaceAfter=8, alignment=1, textColor=colors.gray)
+    title_s = ParagraphStyle('t',  fontName=FONT_BOLD, fontSize=13, spaceAfter=4, alignment=1)
+    date_s  = ParagraphStyle('d',  fontName=FONT, fontSize=8, spaceAfter=8, alignment=1, textColor=colors.gray)
     shop_s  = ParagraphStyle('sh', fontName=FONT_BOLD, fontSize=9, textColor=colors.white)
-    item_s  = ParagraphStyle('i', fontName=FONT, fontSize=8, textColor=colors.black, leading=11)
-    cost_s  = ParagraphStyle('c', fontName=FONT, fontSize=8, textColor=colors.HexColor('#333'), alignment=2)
-    tot_s   = ParagraphStyle('tot', fontName=FONT_BOLD, fontSize=8, textColor=BLUE)
-    hdr_s   = ParagraphStyle('hdr', fontName=FONT_BOLD, fontSize=10, spaceAfter=4)
+    item_s  = ParagraphStyle('i',  fontName=FONT, fontSize=8, textColor=colors.black, leading=11)
+    cost_s  = ParagraphStyle('c',  fontName=FONT, fontSize=8, textColor=colors.HexColor('#555'), alignment=2)
+    tot_s   = ParagraphStyle('tt', fontName=FONT_BOLD, fontSize=8, textColor=GREEN)
+    hdr_s   = ParagraphStyle('h',  fontName=FONT_BOLD, fontSize=10, spaceAfter=4)
 
-    elements.append(Paragraph("Paan Shop - Restock Order", title_s))
-    elements.append(Paragraph(f"Generated: {date.today().strftime('%d %B %Y')}", date_s))
+    elements.append(Paragraph("Paan Shop — Restock Order", title_s))
+    elements.append(Paragraph(f"Date: {date.today().strftime('%d %B %Y')}", date_s))
 
+    # Organise orders by shop then by column
     orders_by_shop = {}
     for o in orders:
         orders_by_shop.setdefault(o['shop_name'], []).append(o)
 
-    local_by_shop = {}
-    keep_by_shop  = {}
-    market_by_shop = {}
+    godown_by_shop     = {}
+    mkt_paan_by_shop   = {}
+    morning_by_shop    = {}
 
     for shop in SHOPS:
         if shop not in orders_by_shop:
             continue
         for o in orders_by_shop[shop]:
-            cat = classify_item(o['item_name'])
-            if cat == 'local':
-                local_by_shop.setdefault(shop, []).append(o)
-            elif cat == 'keep':
-                keep_by_shop.setdefault(shop, []).append(o)
+            col = classify(o['item_name'])
+            if col == 'godown':
+                godown_by_shop.setdefault(shop, []).append(o)
+            elif col == 'morning':
+                morning_by_shop.setdefault(shop, []).append(o)
             else:
-                market_by_shop.setdefault(shop, []).append(o)
+                mkt_paan_by_shop.setdefault(shop, []).append(o)
 
     all_shops = [s for s in SHOPS if s in orders_by_shop]
-
     if not all_shops:
         elements.append(Paragraph("No pending orders.", item_s))
         doc.build(elements)
         buffer.seek(0)
         return buffer.read()
 
-    total_w  = A4[0] - 1.6*cm
-    col_loc  = total_w * 0.42
-    col_keep = total_w * 0.18
-    col_mkt  = total_w * 0.40
+    # Column widths — godown wider, morning narrower
+    total_w = A4[0] - 1.4*cm
+    col_g = total_w * 0.38   # Godown
+    col_m = total_w * 0.40   # Market+Paan (with cost col)
+    col_k = total_w * 0.22   # Morning (Tin/Cover/Masala/Katha)
 
+    # Header row
     hdr_data = [[
-        Paragraph("LOCAL ITEMS", shop_s),
-        Paragraph("TIN / KATHA", shop_s),
-        Paragraph("MARKET ITEMS", shop_s),
+        Paragraph("GODOWN / गोदाम", shop_s),
+        Paragraph("MARKET + PAAN / मार्केट+पान", shop_s),
+        Paragraph("TIN / COVER / KATHA", shop_s),
     ]]
-    hdr_t = Table(hdr_data, colWidths=[col_loc, col_keep, col_mkt])
+    hdr_t = Table(hdr_data, colWidths=[col_g, col_m, col_k])
     hdr_t.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (1,0), TEAL),
-        ('BACKGROUND', (2,0), (2,0), BLUE),
+        ('BACKGROUND',    (0,0),(0,0), TEAL),
+        ('BACKGROUND',    (1,0),(1,0), GREEN),
+        ('BACKGROUND',    (2,0),(2,0), BROWN),
         ('TOPPADDING',    (0,0),(-1,-1), 5),
         ('BOTTOMPADDING', (0,0),(-1,-1), 5),
         ('LEFTPADDING',   (0,0),(-1,-1), 6),
+        ('LINEAFTER',     (0,0),(1,0), 0.5, colors.white),
     ]))
     elements.append(hdr_t)
-    elements.append(Spacer(1,2))
+    elements.append(Spacer(1, 3))
 
     def p(text, style=None):
         return Paragraph(str(text), style or item_s)
 
-    def fmt_qty(q):
-        return int(q) if q == int(q) else q
+    def fmt(q):
+        return int(q) if float(q) == int(float(q)) else q
 
     for shop in all_shops:
-        loc  = local_by_shop.get(shop, [])
-        keep = keep_by_shop.get(shop, [])
-        mkt  = market_by_shop.get(shop, [])
+        gdn  = godown_by_shop.get(shop, [])
+        mkt  = mkt_paan_by_shop.get(shop, [])
+        mrn  = morning_by_shop.get(shop, [])
 
-        loc_rows  = [[p(shop, shop_s)]] + [[p(f"  {o['item_name']} - {fmt_qty(o['quantity'])}")] for o in loc]
-        keep_rows = [[p(shop, shop_s)]] + [[p(f"  {o['item_name']} - {fmt_qty(o['quantity'])}")] for o in keep]
+        # Godown column rows
+        g_rows = [[p(shop, shop_s)]]
+        for o in gdn:
+            g_rows.append([p(f"  {o['item_name']} - {fmt(o['quantity'])}")])
 
-        mkt_rows = [[p(shop, shop_s), p('')]]
+        # Market+Paan column rows (with optional cost)
+        m_rows = [[p(shop, shop_s), p('')]]
         total_cost = 0
         for o in mkt:
             price = MARKET_ITEMS.get(o['item_name'], 0)
             cost  = price * o['quantity']
             total_cost += cost
-            cost_txt = p(f"Rs {cost:,.0f}", cost_s) if (show_costs and price > 0) else p('')
-            mkt_rows.append([p(f"  {o['item_name']} - {fmt_qty(o['quantity'])}"), cost_txt])
+            ctxt = p(f"Rs {cost:,.0f}", cost_s) if (show_costs and price > 0) else p('')
+            m_rows.append([p(f"  {o['item_name']} - {fmt(o['quantity'])}"), ctxt])
         if show_costs and total_cost > 0:
-            mkt_rows.append([p(f"  Total: Rs {total_cost:,.0f}", tot_s), p('')])
+            m_rows.append([p(f"  Total: Rs {total_cost:,.0f}", tot_s), p('')])
 
-        n = max(len(loc_rows), len(keep_rows), len(mkt_rows))
-        while len(loc_rows)  < n: loc_rows.append([p('')])
-        while len(keep_rows) < n: keep_rows.append([p('')])
-        while len(mkt_rows)  < n: mkt_rows.append([p(''), p('')])
+        # Morning column rows
+        k_rows = [[p(shop, shop_s)]]
+        for o in mrn:
+            k_rows.append([p(f"  {o['item_name']} - {fmt(o['quantity'])}")])
 
-        rows = []
+        # Pad to same height
+        n = max(len(g_rows), len(m_rows), len(k_rows))
+        while len(g_rows) < n: g_rows.append([p('')])
+        while len(m_rows) < n: m_rows.append([p(''), p('')])
+        while len(k_rows) < n: k_rows.append([p('')])
+
+        # Combine into one table per shop
+        combined = []
         for i in range(n):
-            rows.append([
-                loc_rows[i][0],
-                keep_rows[i][0],
-                mkt_rows[i][0],
-                mkt_rows[i][1] if len(mkt_rows[i]) > 1 else p(''),
+            combined.append([
+                g_rows[i][0],
+                m_rows[i][0],
+                m_rows[i][1] if len(m_rows[i]) > 1 else p(''),
+                k_rows[i][0],
             ])
 
-        t = Table(rows, colWidths=[col_loc, col_keep, col_mkt*0.72, col_mkt*0.28])
+        t = Table(combined, colWidths=[col_g, col_m*0.72, col_m*0.28, col_k])
         t.setStyle(TableStyle([
             ('TOPPADDING',    (0,0),(-1,-1), 2),
             ('BOTTOMPADDING', (0,0),(-1,-1), 2),
             ('LEFTPADDING',   (0,0),(-1,-1), 4),
-            ('LINEAFTER',     (0,0),(0,-1), 0.3, colors.lightgrey),
-            ('LINEAFTER',     (1,0),(1,-1), 0.3, colors.lightgrey),
-            ('LINEBELOW',     (0,-1),(-1,-1), 0.5, colors.lightgrey),
-            ('BACKGROUND',    (0,0),(3,0), colors.HexColor('#e0f2f1')),
+            ('LINEAFTER',     (0,0),(0,-1), 0.4, colors.HexColor('#b2dfdb')),
+            ('LINEAFTER',     (2,0),(2,-1), 0.4, colors.HexColor('#bbdefb')),
+            ('LINEBELOW',     (0,-1),(-1,-1), 0.6, colors.lightgrey),
+            # Shop header row background
+            ('BACKGROUND',    (0,0),(0,0), colors.HexColor('#e0f2f1')),
+            ('BACKGROUND',    (1,0),(2,0), colors.HexColor('#e3f2fd')),
+            ('BACKGROUND',    (3,0),(3,0), colors.HexColor('#efebe9')),
         ]))
         elements.append(t)
-        elements.append(Spacer(1,2))
+        elements.append(Spacer(1, 2))
 
+    # Cost summary (admin only)
     if show_costs:
-        elements.append(Spacer(1,8))
+        elements.append(Spacer(1, 10))
         elements.append(Paragraph("Market Cost Summary", hdr_s))
-        sum_data = [["Shop","Items","Total Cost"]]
+        sum_data = [["Shop", "Items", "Market Cost"]]
         grand = 0
         for shop in all_shops:
-            mkt = market_by_shop.get(shop,[])
-            if mkt:
-                c = sum(MARKET_ITEMS.get(o['item_name'],0)*o['quantity'] for o in mkt)
+            mkt = mkt_paan_by_shop.get(shop, [])
+            c = sum(MARKET_ITEMS.get(o['item_name'],0)*o['quantity'] for o in mkt)
+            if c > 0:
                 grand += c
                 sum_data.append([shop, str(len(mkt)), f"Rs {c:,.0f}"])
-        sum_data.append(["TOTAL","",f"Rs {grand:,.0f}"])
-        st = Table(sum_data, colWidths=[5*cm,3*cm,5*cm])
+        sum_data.append(["TOTAL", "", f"Rs {grand:,.0f}"])
+        st = Table(sum_data, colWidths=[5*cm, 3*cm, 5*cm])
         st.setStyle(TableStyle([
             ('BACKGROUND',    (0,0),(-1,0), TEAL),
             ('TEXTCOLOR',     (0,0),(-1,0), colors.white),
@@ -171,7 +195,7 @@ def generate_restock_pdf(orders, show_costs=True):
             ('FONTNAME',      (0,-1),(-1,-1), FONT_BOLD),
             ('BACKGROUND',    (0,-1),(-1,-1), colors.HexColor('#e8f5e9')),
             ('FONTSIZE',      (0,0),(-1,-1), 9),
-            ('ROWBACKGROUNDS',(0,1),(-1,-2), [colors.white, LIGHT_GRAY]),
+            ('ROWBACKGROUNDS',(0,1),(-1,-2), [colors.white, LIGHT]),
             ('GRID',          (0,0),(-1,-1), 0.3, colors.lightgrey),
             ('TOPPADDING',    (0,0),(-1,-1), 4),
             ('BOTTOMPADDING', (0,0),(-1,-1), 4),
