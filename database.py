@@ -494,32 +494,27 @@ def get_all_stock():
 
 # ── Restock Orders ─────────────────────────────────────
 def place_restock_order(shop_name, items_dict, window_type="day", extra_note=""):
-    """items_dict: {item_name: quantity}"""
     conn = get_connection()
     c = conn.cursor()
     from datetime import datetime as dt
     now = dt.now().isoformat()
     today = str(date.today())
+
+    # insert items (ONLY ONCE)
     for item, qty in items_dict.items():
         if qty and float(qty) > 0:
-            c.execute("""INSERT INTO restock_orders (shop_name, item_name, quantity, order_date, order_time, window_type)
+            c.execute("""INSERT INTO restock_orders 
+                         (shop_name, item_name, quantity, order_date, order_time, window_type)
                          VALUES (?,?,?,?,?,?)""",
                       (shop_name, item, float(qty), today, now, window_type))
-            
-    for item, qty in items_dict.items():
-        if qty and float(qty) > 0:
-            c.execute("""INSERT INTO restock_orders (shop_name, item_name, quantity, order_date, order_time, window_type)
-                        VALUES (?,?,?,?,?,?)""",
-                    (shop_name, item, float(qty), today, now, window_type))
 
     # extra note
     if extra_note and extra_note.strip():
         c.execute("""INSERT INTO restock_orders 
-                    (shop_name, item_name, quantity, order_date, order_time, window_type, extra_note) 
-                    VALUES (?,?,?,?,?,?,?)""",
-                (shop_name, '__EXTRA__', 0, today, now, window_type, extra_note.strip()))
+                     (shop_name, item_name, quantity, order_date, order_time, window_type, extra_note) 
+                     VALUES (?,?,?,?,?,?,?)""",
+                  (shop_name, '__EXTRA__', 0, today, now, window_type, extra_note.strip()))
 
-    # ALWAYS outside
     conn.commit()
     conn.close()
 
