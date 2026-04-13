@@ -1,6 +1,5 @@
-import os
 import sqlite3
-from datetime import date, datetime
+from datetime import date, datetime, time
 import streamlit as st
 
 DB_PATH = "paan_manager.db"
@@ -563,19 +562,24 @@ def get_monthly_expenses(shop_name, month, year):
 
 # ── Order Time Window ──────────────────────────────────
 def is_order_window_open():
-    """Returns (is_open, window_type) where window_type is 'day', 'night', or None"""
-    from datetime import datetime
-    now = datetime.now()
-    current = now.hour * 60 + now.minute
-    day_start   = 10 * 60       # 10:00
-    day_end     = 18 * 60 + 40  # 18:40
-    night_start = 0             # 00:00
-    night_end   = 4 * 60        # 04:00
-    if day_start <= current <= day_end:
-        return (True, "day")
-    if night_start <= current <= night_end:
-        return (True, "night")
-    return (False, None)
+    now = datetime.now().time()
+    st.write("SERVER TIME:", datetime.now())
+        
+    day_start = time(10, 0)
+    day_end   = time(18, 40)
+
+    night_start = time(0, 0)
+    night_end   = time(4, 0)
+
+    # day window
+    if day_start <= now <= day_end:
+        return True, "day"
+
+    # night window (midnight logic)
+    if now >= night_start and now <= night_end:
+        return True, "night"
+
+    return False, None
 
 def next_window_time():
     from datetime import datetime
