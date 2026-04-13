@@ -1,6 +1,5 @@
 import sqlite3
-from datetime import date, datetime, time
-import streamlit as st
+from datetime import date, datetime, time, timedelta
 
 DB_PATH = "paan_manager.db"
 
@@ -562,8 +561,8 @@ def get_monthly_expenses(shop_name, month, year):
 
 # ── Order Time Window ──────────────────────────────────
 def is_order_window_open():
-    now = datetime.now().time()
-    st.write("SERVER TIME:", datetime.now())
+    now = (datetime.utcnow() + timedelta(hours=5, minutes=30)).time()
+    
         
     day_start = time(10, 0)
     day_end   = time(18, 40)
