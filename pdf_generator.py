@@ -10,11 +10,12 @@ from datetime import date
 from database import MARKET_ITEMS, GODOWN_ITEMS, PAAN_ITEMS, SHOPS
 
 try:
-    pdfmetrics.registerFont(TTFont('Hindi', '/usr/share/fonts/truetype/freefont/FreeSans.ttf'))
-    pdfmetrics.registerFont(TTFont('HindiBold', '/usr/share/fonts/truetype/freefont/FreeSansBold.ttf'))
+    pdfmetrics.registerFont(TTFont('Hindi', 'fonts/NotoSansDevanagari-Regular.ttf'))
+    pdfmetrics.registerFont(TTFont('HindiBold', 'fonts/NotoSansDevanagari-Bold.ttf'))
     FONT = 'Hindi'
     FONT_BOLD = 'HindiBold'
-except:
+except Exception as e:
+    print("Font load failed:", e)
     FONT = 'Helvetica'
     FONT_BOLD = 'Helvetica-Bold'
 
