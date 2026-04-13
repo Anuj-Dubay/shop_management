@@ -129,7 +129,8 @@ def init_db():
         order_time TEXT,
         window_type TEXT DEFAULT "day",
         fulfilled INTEGER DEFAULT 0,
-        fulfilled_date TEXT
+        fulfilled_date TEXT,
+        extra_note TEXT
     )''')
 
     c.execute('''CREATE TABLE IF NOT EXISTS expenses (
@@ -492,7 +493,7 @@ def get_all_stock():
     return rows
 
 # ── Restock Orders ─────────────────────────────────────
-def place_restock_order(shop_name, items_dict, window_type="day"):
+def place_restock_order(shop_name, items_dict, window_type="day", extra_note=""):
     """items_dict: {item_name: quantity}"""
     conn = get_connection()
     c = conn.cursor()
@@ -504,6 +505,21 @@ def place_restock_order(shop_name, items_dict, window_type="day"):
             c.execute("""INSERT INTO restock_orders (shop_name, item_name, quantity, order_date, order_time, window_type)
                          VALUES (?,?,?,?,?,?)""",
                       (shop_name, item, float(qty), today, now, window_type))
+            
+    for item, qty in items_dict.items():
+        if qty and float(qty) > 0:
+            c.execute("""INSERT INTO restock_orders (shop_name, item_name, quantity, order_date, order_time, window_type)
+                        VALUES (?,?,?,?,?,?)""",
+                    (shop_name, item, float(qty), today, now, window_type))
+
+    # extra note
+    if extra_note and extra_note.strip():
+        c.execute("""INSERT INTO restock_orders 
+                    (shop_name, item_name, quantity, order_date, order_time, window_type, extra_note) 
+                    VALUES (?,?,?,?,?,?,?)""",
+                (shop_name, '__EXTRA__', 0, today, now, window_type, extra_note.strip()))
+
+    # ALWAYS outside
     conn.commit()
     conn.close()
 

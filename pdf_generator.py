@@ -141,6 +141,8 @@ def generate_restock_pdf(orders, show_costs=True):
         for o in mrn:
             k_rows.append([p(f"  {o['item_name']} - {fmt(o['quantity'])}")])
 
+        
+        
         # Pad to same height
         n = max(len(g_rows), len(m_rows), len(k_rows))
         while len(g_rows) < n: g_rows.append([p('')])
@@ -172,6 +174,12 @@ def generate_restock_pdf(orders, show_costs=True):
         ]))
         elements.append(t)
         elements.append(Spacer(1, 2))
+        
+        extras = [o for o in orders_by_shop.get(shop,[]) if o['item_name'] == '__EXTRA__']
+        if extras:
+            note_text = " | ".join(o.get('extra_note','') for o in extras if o.get('extra_note'))
+            if note_text:
+                elements.append(Paragraph(f"📝 {shop}: {note_text}", item_s))
 
     # Cost summary (admin only)
     if show_costs:

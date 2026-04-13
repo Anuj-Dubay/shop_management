@@ -158,15 +158,20 @@ def show_orders(today):
 
     for shop, shop_orders in orders_by_shop.items():
         with st.expander(f"🏪 {shop} — {len(shop_orders)} items", expanded=True):
+
             for order in shop_orders:
+                # 🔴 skip extra notes from normal rendering
+                if order['item_name'] == '__EXTRA__':
+                    continue
+
                 item = order['item_name']
                 itype = 'market' if item in MARKET_ITEMS else 'local'
                 price = MARKET_ITEMS.get(item, 0)
                 ids = order.get('_ids', [order['id']])
 
-                c1,c2,c3,c4,c5 = st.columns([3,1,1,1,1])
+                c1, c2, c3, c4, c5 = st.columns([3,1,1,1,1])
                 with c1:
-                    label = "🔵 Market" if itype=='market' else "🟢 Local"
+                    label = "🔵 Market" if itype == 'market' else "🟢 Local"
                     st.write(f"**{item}** {label}")
                     if order.get('window_type') == 'night':
                         st.caption("🌙 Night order")
@@ -174,7 +179,7 @@ def show_orders(today):
                     st.write(f"Qty: **{order['quantity']}**")
                 with c3:
                     if price:
-                        st.write(f"Rs {price*order['quantity']:,.0f}")
+                        st.write(f"Rs {price * order['quantity']:,.0f}")
                 with c4:
                     st.caption(f"{order.get('order_date','')}")
                 with c5:
@@ -182,6 +187,12 @@ def show_orders(today):
                         fulfill_orders_bulk(ids, shop, item, order['quantity'], itype)
                         st.success(f"Fulfilled {item}!")
                         st.rerun()
+
+            # 📝 show extra notes once per shop
+            extras = [o for o in shop_orders if o['item_name'] == '__EXTRA__']
+            for e in extras:
+                if e.get('extra_note'):
+                    st.info(f"📝 Extra note: {e['extra_note']}")
 
 
 # ── Staff & Salary ─────────────────────────────────────

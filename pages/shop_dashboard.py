@@ -201,10 +201,11 @@ def show_restock(shop, today):
         for i, item in enumerate(MARKET_ITEMS.keys()):
             with cols2[i%3]:
                 market_order[item] = st.number_input(item, min_value=0.0, step=1.0, key=f"ro_m_{item}")
+        extra = st.text_area("Extra / अतिरिक्त आइटम (type anything)", height=80, key="extra_items")
         if st.form_submit_button("📤 Place Order / ऑर्डर दें", use_container_width=True):
             all_orders = {k: v for k, v in {**local_order, **market_order}.items() if v > 0}
             if all_orders:
-                place_restock_order(shop, all_orders, window_type)
+                place_restock_order(shop, all_orders, window_type, extra_note=extra)
                 st.success(f"✅ Order placed for {len(all_orders)} items!")
             else:
                 st.warning("Enter at least one item.")
