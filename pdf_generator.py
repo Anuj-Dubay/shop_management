@@ -38,7 +38,7 @@ def classify(item):
     # Market items and Paan items go together in middle column
     return 'market_paan'
 
-def generate_restock_pdf(orders, show_costs=True):
+def generate_restock_pdf(orders, show_costs=False):
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4,
                              leftMargin=0.7*cm, rightMargin=0.7*cm,
@@ -49,11 +49,9 @@ def generate_restock_pdf(orders, show_costs=True):
     date_s  = ParagraphStyle('d',  fontName=FONT, fontSize=8, spaceAfter=8, alignment=1, textColor=colors.gray)
     shop_s  = ParagraphStyle('sh', fontName=FONT_BOLD, fontSize=9, textColor=colors.white)
     item_s  = ParagraphStyle('i',  fontName=FONT, fontSize=8, textColor=colors.black, leading=11)
-    cost_s  = ParagraphStyle('c',  fontName=FONT, fontSize=8, textColor=colors.HexColor('#555'), alignment=2)
-    tot_s   = ParagraphStyle('tt', fontName=FONT_BOLD, fontSize=8, textColor=GREEN)
     hdr_s   = ParagraphStyle('h',  fontName=FONT_BOLD, fontSize=10, spaceAfter=4)
 
-    elements.append(Paragraph("Paan Shop — Restock Order", title_s))
+    elements.append(Paragraph("Paan Shop — Restock Sheet", title_s))
     elements.append(Paragraph(f"Date: {date.today().strftime('%d %B %Y')}", date_s))
 
     # Organise orders by shop then by column
@@ -70,6 +68,8 @@ def generate_restock_pdf(orders, show_costs=True):
             continue
         for o in orders_by_shop[shop]:
             col = classify(o['item_name'])
+            if o['item_name'] == '__EXTRA__':
+                continue
             if col == 'godown':
                 godown_by_shop.setdefault(shop, []).append(o)
             elif col == 'morning':
@@ -127,15 +127,10 @@ def generate_restock_pdf(orders, show_costs=True):
 
         # Market+Paan column rows (with optional cost)
         m_rows = [[p(shop, shop_s), p('')]]
-        total_cost = 0
         for o in mkt:
-            price = MARKET_ITEMS.get(o['item_name'], 0)
-            cost  = price * o['quantity']
-            total_cost += cost
-            ctxt = p(f"Rs {cost:,.0f}", cost_s) if (show_costs and price > 0) else p('')
+            ctxt = p('')  # no cost shown
             m_rows.append([p(f"  {o['item_name']} - {fmt(o['quantity'])}"), ctxt])
-        if show_costs and total_cost > 0:
-            m_rows.append([p(f"  Total: Rs {total_cost:,.0f}", tot_s), p('')])
+        
 
         # Morning column rows
         k_rows = [[p(shop, shop_s)]]
@@ -182,35 +177,6 @@ def generate_restock_pdf(orders, show_costs=True):
             if note_text:
                 elements.append(Paragraph(f"📝 {shop}: {note_text}", item_s))
 
-    # Cost summary (admin only)
-    if show_costs:
-        elements.append(Spacer(1, 10))
-        elements.append(Paragraph("Market Cost Summary", hdr_s))
-        sum_data = [["Shop", "Items", "Market Cost"]]
-        grand = 0
-        for shop in all_shops:
-            mkt = mkt_paan_by_shop.get(shop, [])
-            c = sum(MARKET_ITEMS.get(o['item_name'],0)*o['quantity'] for o in mkt)
-            if c > 0:
-                grand += c
-                sum_data.append([shop, str(len(mkt)), f"Rs {c:,.0f}"])
-        sum_data.append(["TOTAL", "", f"Rs {grand:,.0f}"])
-        st = Table(sum_data, colWidths=[5*cm, 3*cm, 5*cm])
-        st.setStyle(TableStyle([
-            ('BACKGROUND',    (0,0),(-1,0), TEAL),
-            ('TEXTCOLOR',     (0,0),(-1,0), colors.white),
-            ('FONTNAME',      (0,0),(-1,-1), FONT),
-            ('FONTNAME',      (0,0),(-1,0), FONT_BOLD),
-            ('FONTNAME',      (0,-1),(-1,-1), FONT_BOLD),
-            ('BACKGROUND',    (0,-1),(-1,-1), colors.HexColor('#e8f5e9')),
-            ('FONTSIZE',      (0,0),(-1,-1), 9),
-            ('ROWBACKGROUNDS',(0,1),(-1,-2), [colors.white, LIGHT]),
-            ('GRID',          (0,0),(-1,-1), 0.3, colors.lightgrey),
-            ('TOPPADDING',    (0,0),(-1,-1), 4),
-            ('BOTTOMPADDING', (0,0),(-1,-1), 4),
-            ('LEFTPADDING',   (0,0),(-1,-1), 6),
-        ]))
-        elements.append(st)
 
     doc.build(elements)
     buffer.seek(0)

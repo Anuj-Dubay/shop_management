@@ -178,8 +178,7 @@ def show_orders(today):
                 with c2:
                     st.write(f"Qty: **{order['quantity']}**")
                 with c3:
-                    if price:
-                        st.write(f"Rs {price * order['quantity']:,.0f}")
+                    pass
                 with c4:
                     st.caption(f"{order.get('order_date','')}")
                 with c5:
@@ -193,7 +192,28 @@ def show_orders(today):
             for e in extras:
                 if e.get('extra_note'):
                     st.info(f"📝 Extra note: {e['extra_note']}")
+                    
+    st.divider()
+    st.markdown("### 💰 Cost Summary (Admin Only)")
 
+    total = 0
+
+    for shop, shop_orders in orders_by_shop.items():
+        shop_total = 0
+        for o in shop_orders:
+            if o['item_name'] == '__EXTRA__':
+                continue
+            price = MARKET_ITEMS.get(o['item_name'], 0)
+            shop_total += price * o['quantity']
+
+        if shop_total > 0:
+            st.write(f"**{shop}** → ₹{shop_total:,.0f}")
+            total += shop_total
+
+    st.markdown(f"### 🧾 Grand Total: ₹{total:,.0f}")
+
+    # copy-friendly
+    st.code(f"Total Cost: ₹{total:,.0f}")
 
 # ── Staff & Salary ─────────────────────────────────────
 def show_staff(today):
@@ -383,13 +403,12 @@ def show_pdf(today):
                 price = MARKET_ITEMS.get(item['item_name'],0)
                 cost = price * item['quantity']
                 total_cost += cost
-                st.write(f"  • {item['item_name']}: {item['quantity']} — Rs {cost:,.0f}")
-        if total_cost:
-            st.metric("Total Market Cost", f"Rs {total_cost:,.0f}")
+                st.write(f"  • {item['item_name']}: {item['quantity']}")
+        
 
     st.divider()
     if st.button("📄 Generate PDF", use_container_width=True, type="primary"):
-        pdf_bytes = generate_restock_pdf(orders, show_costs=True)
+        pdf_bytes = generate_restock_pdf(orders)
         st.download_button("⬇️ Download PDF", data=pdf_bytes,
                            file_name=f"restock_{date_from}_to_{date_to}.pdf",
                            mime="application/pdf", use_container_width=True)
