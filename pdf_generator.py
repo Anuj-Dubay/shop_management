@@ -9,6 +9,26 @@ from io import BytesIO
 from datetime import date
 from database import MARKET_ITEMS, GODOWN_ITEMS, PAAN_ITEMS, SHOPS
 
+IGNORE_ITEMS = [
+    'टिन','खजूर','पार्सल कवर','गुलाब','मस्त','डार्क','शिव',
+    'चेरी','टूथपिक','सफ़ेद','मैंगो','पिस्ता','स्ट्रॉबेरी','ब्लू बेरी','जेली',
+    'खजूर बॉक्स','खड़ा खजूर','खजूर मसाला','अंजीर','ड्राय फ्रूट',
+    'मघई बॉक्स','टिशू','कप','कपडा','कथा'
+]
+
+KEEP_ITEMS = ['टिन','कथा']
+
+item_prices = {
+    'टिन': 3500, 'खजूर': 200, 'पार्सल कवर': 240, 'शिव': 700,
+    'चेरी': 280, 'टूथपिक': 125, 'ब्लू बेरी': 230,
+    'गुलाब': 200, 'मस्त': 200, 'डार्क': 150,
+    'सफ़ेद': 210, 'मैंगो': 215, 'पिस्ता': 215,
+    'स्ट्रॉबेरी': 215, 'जेली': 250,
+    'खजूर बॉक्स': 50, 'खड़ा खजूर': 300,
+    'खजूर मसाला': 300, 'अंजीर': 800, 'ड्राय फ्रूट': 800,
+    'मघई बॉक्स': 0, 'टिशू': 0, 'कप': 0, 'कपडा': 0, 'कथा': 0
+}
+
 try:
     pdfmetrics.registerFont(TTFont('Hindi', 'fonts/NotoSansDevanagari-Regular.ttf'))
     pdfmetrics.registerFont(TTFont('HindiBold', 'fonts/NotoSansDevanagari-Bold.ttf'))
@@ -30,13 +50,7 @@ MORNING_ITEMS = [
     'tin', 'katha',
 ]
 
-def classify(item):
-    if item in MORNING_ITEMS:
-        return 'morning'
-    if item in GODOWN_ITEMS:
-        return 'godown'
-    # Market items and Paan items go together in middle column
-    return 'market_paan'
+
 
 def generate_restock_pdf(orders, show_costs=False):
     buffer = BytesIO()
@@ -66,17 +80,27 @@ def generate_restock_pdf(orders, show_costs=False):
     for shop in SHOPS:
         if shop not in orders_by_shop:
             continue
-        for o in orders_by_shop[shop]:
-            col = classify(o['item_name'])
-            if o['item_name'] == '__EXTRA__':
-                continue
-            if col == 'godown':
-                godown_by_shop.setdefault(shop, []).append(o)
-            elif col == 'morning':
-                morning_by_shop.setdefault(shop, []).append(o)
-            else:
-                mkt_paan_by_shop.setdefault(shop, []).append(o)
 
+        for o in orders_by_shop[shop]:
+            item = o['item_name'].strip()
+            
+            if item == '__EXTRA__':
+                continue
+
+            #  COLUMN 3 (TIN/KATHA)
+            if item in KEEP_ITEMS:
+                morning_by_shop.setdefault(shop, []).append(o)
+                continue
+
+            #  COLUMN 1 (LOCAL / IGNORED ITEMS)
+            if item in IGNORE_ITEMS:
+                godown_by_shop.setdefault(shop, []).append(o)
+                continue
+
+            #  COLUMN 2 (MARKET)
+            mkt_paan_by_shop.setdefault(shop, []).append(o)
+            
+            
     all_shops = [s for s in SHOPS if s in orders_by_shop]
     if not all_shops:
         elements.append(Paragraph("No pending orders.", item_s))
@@ -123,7 +147,17 @@ def generate_restock_pdf(orders, show_costs=False):
         # Godown column rows
         g_rows = [[p(shop, shop_s)]]
         for o in gdn:
-            g_rows.append([p(f"  {o['item_name']} - {fmt(o['quantity'])}")])
+            item = o['item_name']
+            qty = o['quantity']
+
+            price = item_prices.get(item, 0)
+            cost = price * qty if price else 0
+
+            text = f"  {item} - {fmt(qty)}"
+            if cost:
+                text += f" (₹{int(cost)})"
+
+            g_rows.append([p(text)])
 
         # Market+Paan column rows (with optional cost)
         m_rows = [[p(shop, shop_s), p('')]]
@@ -132,10 +166,25 @@ def generate_restock_pdf(orders, show_costs=False):
             m_rows.append([p(f"  {o['item_name']} - {fmt(o['quantity'])}"), ctxt])
         
 
-        # Morning column rows
+        # Morning column r
         k_rows = [[p(shop, shop_s)]]
+
+        tin_total = 0
+
         for o in mrn:
-            k_rows.append([p(f"  {o['item_name']} - {fmt(o['quantity'])}")])
+            item = o['item_name']
+            qty = o['quantity']
+
+            if item == 'टिन':
+                tin_total += qty
+
+            k_rows.append([p(f"  {item} - {fmt(qty)}")])
+
+        # 👉 add cover masala at top
+        if tin_total:
+            cover = tin_total * 0.75
+            k_rows.insert(1, [p(f"  कवर मसाला - {cover:.2f}")])
+        
 
         
         
