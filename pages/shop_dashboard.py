@@ -12,6 +12,15 @@ from database import (
     PAAN_ITEMS, GODOWN_ITEMS, LOCAL_ITEMS, MARKET_ITEMS, ALL_ITEMS
 )
 
+IGNORE_ITEMS = [
+    'टिन','खजूर','पार्सल कवर','गुलाब','मस्त','डार्क','शिव',
+    'चेरी','टूथपिक','सफ़ेद','मैंगो','पिस्ता','स्ट्रॉबेरी','ब्लू बेरी','जेली',
+    'खजूर बॉक्स','खड़ा खजूर','खजूर मसाला','अंजीर','ड्राय फ्रूट',
+    'मघई बॉक्स','टिशू','कप','कपडा','कथा'
+]
+
+KEEP_ITEMS = ['टिन','कथा']
+
 def show():
     if not st.session_state.get("user"):
         st.error("🔒 Access denied.")
@@ -189,21 +198,64 @@ def show_restock(shop, today):
         st.success("✅ Order window open until 6:40 PM")
 
     with st.form("restock_form"):
-        st.write("**Local Items / लोकल आइटम**")
         local_order = {}
-        cols = st.columns(3)
-        for i, item in enumerate(LOCAL_ITEMS):
-            with cols[i%3]:
-                local_order[item] = st.number_input(item, min_value=0.0, step=1.0, key=f"ro_l_{item}")
-        st.write("**Market Items / मार्केट आइटम**")
         market_order = {}
-        cols2 = st.columns(3)
-        for i, item in enumerate(MARKET_ITEMS.keys()):
-            with cols2[i%3]:
-                market_order[item] = st.number_input(item, min_value=0.0, step=1.0, key=f"ro_m_{item}")
+        tin_order = {}
+
+        # 👉 combine all items
+        all_items = list(dict.fromkeys(list(LOCAL_ITEMS) + list(MARKET_ITEMS.keys())))
+
+        # 👉 classify (same as PDF)
+        local_items = []
+        market_items = []
+        tin_items = []
+
+        for item in all_items:
+            item = item.strip()
+
+            if item in KEEP_ITEMS:
+                tin_items.append(item)
+            elif item in IGNORE_ITEMS:
+                local_items.append(item)
+            else:
+                market_items.append(item)
+                
+        local_items.sort()
+        market_items.sort()
+        tin_items.sort()
+                
+        st.write("### 🟢 Local Items")
+
+        cols = st.columns(3)
+        for i, item in enumerate(local_items):
+            with cols[i % 3]:
+                local_order[item] = st.number_input(
+                    item, min_value=0.0, step=1.0, key=f"ro_l_{item}"
+                )
+                
+        st.write("### 🔵 Market Items")
+
+        cols = st.columns(3)
+        for i, item in enumerate(market_items):
+            with cols[i % 3]:
+                market_order[item] = st.number_input(
+                    item, min_value=0.0, step=1.0, key=f"ro_m_{item}"
+                )
+            
+        st.write("### 🟤 Tin / Katha")
+
+        cols = st.columns(3)
+        for i, item in enumerate(tin_items):
+            with cols[i % 3]:
+                tin_order[item] = st.number_input(
+                    item, min_value=0.0, step=1.0, key=f"ro_t_{item}"
+                ) 
+                    
         extra = st.text_area("Extra / अतिरिक्त आइटम (type anything)", height=80, key="extra_items")
         if st.form_submit_button("📤 Place Order / ऑर्डर दें", use_container_width=True):
-            all_orders = {k: v for k, v in {**local_order, **market_order}.items() if v > 0}
+            all_orders = {
+                k: v for k, v in {**local_order, **market_order, **tin_order}.items() if v > 0
+            }
             if all_orders:
                 place_restock_order(shop, all_orders, window_type, extra_note=extra)
                 st.success(f"✅ Order placed for {len(all_orders)} items!")
