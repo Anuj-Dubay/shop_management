@@ -9,33 +9,12 @@ from io import BytesIO
 from datetime import date
 from database import MARKET_ITEMS, GODOWN_ITEMS, PAAN_ITEMS, SHOPS
 
-IGNORE_ITEMS = [
-    'टिन','खजूर','पार्सल कवर','गुलाब','मस्त','डार्क','शिव',
-    'चेरी','टूथपिक','सफ़ेद','मैंगो','पिस्ता','स्ट्रॉबेरी','ब्लू बेरी','जेली',
-    'खजूर बॉक्स','खड़ा खजूर','खजूर मसाला','अंजीर','ड्राय फ्रूट',
-    'मघई बॉक्स','टिशू','कप','कपडा','कथा'
-]
-
-KEEP_ITEMS = ['टिन','कथा']
-
-item_prices = {
-    'टिन': 3500, 'खजूर': 200, 'पार्सल कवर': 240, 'शिव': 700,
-    'चेरी': 280, 'टूथपिक': 125, 'ब्लू बेरी': 230,
-    'गुलाब': 200, 'मस्त': 200, 'डार्क': 150,
-    'सफ़ेद': 210, 'मैंगो': 215, 'पिस्ता': 215,
-    'स्ट्रॉबेरी': 215, 'जेली': 250,
-    'खजूर बॉक्स': 50, 'खड़ा खजूर': 300,
-    'खजूर मसाला': 300, 'अंजीर': 800, 'ड्राय फ्रूट': 800,
-    'मघई बॉक्स': 0, 'टिशू': 0, 'कप': 0, 'कपडा': 0, 'कथा': 0
-}
-
 try:
-    pdfmetrics.registerFont(TTFont('Hindi', 'fonts/NotoSansDevanagari-Regular.ttf'))
-    pdfmetrics.registerFont(TTFont('HindiBold', 'fonts/NotoSansDevanagari-Bold.ttf'))
+    pdfmetrics.registerFont(TTFont('Hindi', '/usr/share/fonts/truetype/freefont/FreeSans.ttf'))
+    pdfmetrics.registerFont(TTFont('HindiBold', '/usr/share/fonts/truetype/freefont/FreeSansBold.ttf'))
     FONT = 'Hindi'
     FONT_BOLD = 'HindiBold'
-except Exception as e:
-    print("Font load failed:", e)
+except:
     FONT = 'Helvetica'
     FONT_BOLD = 'Helvetica-Bold'
 
@@ -50,9 +29,15 @@ MORNING_ITEMS = [
     'tin', 'katha',
 ]
 
+def classify(item):
+    if item in MORNING_ITEMS:
+        return 'morning'
+    if item in GODOWN_ITEMS:
+        return 'godown'
+    # Market items and Paan items go together in middle column
+    return 'market_paan'
 
-
-def generate_restock_pdf(orders, show_costs=False):
+def generate_restock_pdf(orders, show_costs=True):
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4,
                              leftMargin=0.7*cm, rightMargin=0.7*cm,
@@ -63,9 +48,11 @@ def generate_restock_pdf(orders, show_costs=False):
     date_s  = ParagraphStyle('d',  fontName=FONT, fontSize=8, spaceAfter=8, alignment=1, textColor=colors.gray)
     shop_s  = ParagraphStyle('sh', fontName=FONT_BOLD, fontSize=9, textColor=colors.white)
     item_s  = ParagraphStyle('i',  fontName=FONT, fontSize=8, textColor=colors.black, leading=11)
+    cost_s  = ParagraphStyle('c',  fontName=FONT, fontSize=8, textColor=colors.HexColor('#555'), alignment=2)
+    tot_s   = ParagraphStyle('tt', fontName=FONT_BOLD, fontSize=8, textColor=GREEN)
     hdr_s   = ParagraphStyle('h',  fontName=FONT_BOLD, fontSize=10, spaceAfter=4)
 
-    elements.append(Paragraph("Paan Shop — Restock Sheet", title_s))
+    elements.append(Paragraph("Paan Shop — Restock Order", title_s))
     elements.append(Paragraph(f"Date: {date.today().strftime('%d %B %Y')}", date_s))
 
     # Organise orders by shop then by column
@@ -80,27 +67,15 @@ def generate_restock_pdf(orders, show_costs=False):
     for shop in SHOPS:
         if shop not in orders_by_shop:
             continue
-
         for o in orders_by_shop[shop]:
-            item = o['item_name'].strip()
-            
-            if item == '__EXTRA__':
-                continue
-
-            #  COLUMN 3 (TIN/KATHA)
-            if item in KEEP_ITEMS:
-                morning_by_shop.setdefault(shop, []).append(o)
-                continue
-
-            #  COLUMN 1 (LOCAL / IGNORED ITEMS)
-            if item in IGNORE_ITEMS:
+            col = classify(o['item_name'])
+            if col == 'godown':
                 godown_by_shop.setdefault(shop, []).append(o)
-                continue
+            elif col == 'morning':
+                morning_by_shop.setdefault(shop, []).append(o)
+            else:
+                mkt_paan_by_shop.setdefault(shop, []).append(o)
 
-            #  COLUMN 2 (MARKET)
-            mkt_paan_by_shop.setdefault(shop, []).append(o)
-            
-            
     all_shops = [s for s in SHOPS if s in orders_by_shop]
     if not all_shops:
         elements.append(Paragraph("No pending orders.", item_s))
@@ -147,47 +122,25 @@ def generate_restock_pdf(orders, show_costs=False):
         # Godown column rows
         g_rows = [[p(shop, shop_s)]]
         for o in gdn:
-            item = o['item_name']
-            qty = o['quantity']
-
-            price = item_prices.get(item, 0)
-            cost = price * qty if price else 0
-
-            text = f"  {item} - {fmt(qty)}"
-            if cost:
-                text += f" (₹{int(cost)})"
-
-            g_rows.append([p(text)])
+            g_rows.append([p(f"  {o['item_name']} - {fmt(o['quantity'])}")])
 
         # Market+Paan column rows (with optional cost)
         m_rows = [[p(shop, shop_s), p('')]]
+        total_cost = 0
         for o in mkt:
-            ctxt = p('')  # no cost shown
+            price = MARKET_ITEMS.get(o['item_name'], 0)
+            cost  = price * o['quantity']
+            total_cost += cost
+            ctxt = p(f"Rs {cost:,.0f}", cost_s) if (show_costs and price > 0) else p('')
             m_rows.append([p(f"  {o['item_name']} - {fmt(o['quantity'])}"), ctxt])
-        
+        if show_costs and total_cost > 0:
+            m_rows.append([p(f"  Total: Rs {total_cost:,.0f}", tot_s), p('')])
 
-        # Morning column r
+        # Morning column rows
         k_rows = [[p(shop, shop_s)]]
-
-        tin_total = 0
-
         for o in mrn:
-            item = o['item_name']
-            qty = o['quantity']
+            k_rows.append([p(f"  {o['item_name']} - {fmt(o['quantity'])}")])
 
-            if item == 'टिन':
-                tin_total += qty
-
-            k_rows.append([p(f"  {item} - {fmt(qty)}")])
-
-        # 👉 add cover masala at top
-        if tin_total:
-            cover = tin_total * 0.75
-            k_rows.insert(1, [p(f"  कवर मसाला - {cover:.2f}")])
-        
-
-        
-        
         # Pad to same height
         n = max(len(g_rows), len(m_rows), len(k_rows))
         while len(g_rows) < n: g_rows.append([p('')])
@@ -218,14 +171,47 @@ def generate_restock_pdf(orders, show_costs=False):
             ('BACKGROUND',    (3,0),(3,0), colors.HexColor('#efebe9')),
         ]))
         elements.append(t)
-        elements.append(Spacer(1, 2))
-        
-        extras = [o for o in orders_by_shop.get(shop,[]) if o['item_name'] == '__EXTRA__']
-        if extras:
-            note_text = " | ".join(o.get('extra_note','') for o in extras if o.get('extra_note'))
-            if note_text:
-                elements.append(Paragraph(f"📝 {shop}: {note_text}", item_s))
 
+        # Extra notes for this shop
+        extras = [o for o in orders_by_shop.get(shop,[])
+                  if o.get('item_name') == '__EXTRA__' and o.get('extra_note')]
+        for e in extras:
+            note_style = ParagraphStyle('note', fontName=FONT, fontSize=8,
+                                         textColor=colors.HexColor('#555'),
+                                         leftIndent=6, spaceAfter=2)
+            elements.append(Paragraph(f"📝 Extra: {e['extra_note']}", note_style))
+
+        elements.append(Spacer(1, 2))
+
+    # Cost summary (admin only)
+    if show_costs:
+        elements.append(Spacer(1, 10))
+        elements.append(Paragraph("Market Cost Summary", hdr_s))
+        sum_data = [["Shop", "Items", "Market Cost"]]
+        grand = 0
+        for shop in all_shops:
+            mkt = mkt_paan_by_shop.get(shop, [])
+            c = sum(MARKET_ITEMS.get(o['item_name'],0)*o['quantity'] for o in mkt)
+            if c > 0:
+                grand += c
+                sum_data.append([shop, str(len(mkt)), f"Rs {c:,.0f}"])
+        sum_data.append(["TOTAL", "", f"Rs {grand:,.0f}"])
+        st = Table(sum_data, colWidths=[5*cm, 3*cm, 5*cm])
+        st.setStyle(TableStyle([
+            ('BACKGROUND',    (0,0),(-1,0), TEAL),
+            ('TEXTCOLOR',     (0,0),(-1,0), colors.white),
+            ('FONTNAME',      (0,0),(-1,-1), FONT),
+            ('FONTNAME',      (0,0),(-1,0), FONT_BOLD),
+            ('FONTNAME',      (0,-1),(-1,-1), FONT_BOLD),
+            ('BACKGROUND',    (0,-1),(-1,-1), colors.HexColor('#e8f5e9')),
+            ('FONTSIZE',      (0,0),(-1,-1), 9),
+            ('ROWBACKGROUNDS',(0,1),(-1,-2), [colors.white, LIGHT]),
+            ('GRID',          (0,0),(-1,-1), 0.3, colors.lightgrey),
+            ('TOPPADDING',    (0,0),(-1,-1), 4),
+            ('BOTTOMPADDING', (0,0),(-1,-1), 4),
+            ('LEFTPADDING',   (0,0),(-1,-1), 6),
+        ]))
+        elements.append(st)
 
     doc.build(elements)
     buffer.seek(0)

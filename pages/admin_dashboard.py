@@ -157,28 +157,39 @@ def show_orders(today):
         orders_by_shop.setdefault(o['shop_name'], []).append(o)
 
     for shop, shop_orders in orders_by_shop.items():
-        with st.expander(f"🏪 {shop} — {len(shop_orders)} items", expanded=True):
+        # Separate extra notes from real items
+        extra_notes = [o for o in shop_orders if o['item_name'] == '__EXTRA__']
+        real_orders  = [o for o in shop_orders if o['item_name'] != '__EXTRA__']
 
-            for order in shop_orders:
-                # 🔴 skip extra notes from normal rendering
-                if order['item_name'] == '__EXTRA__':
-                    continue
+        label_count = f"{len(real_orders)} items" + (" + 📝 note" if extra_notes else "")
+        with st.expander(f"🏪 {shop} — {label_count}", expanded=True):
+            # Show extra notes first
+            for en in extra_notes:
+                st.info(f"📝 Extra note: **{en.get('extra_note','')}**")
 
-                item = order['item_name']
+            for order in real_orders:
+                item  = order['item_name']
                 itype = 'market' if item in MARKET_ITEMS else 'local'
                 price = MARKET_ITEMS.get(item, 0)
-                ids = order.get('_ids', [order['id']])
+                ids   = order.get('_ids', [order['id']])
 
-                c1, c2, c3, c4, c5 = st.columns([3,1,1,1,1])
+                # Group label
+                from database import GODOWN_ITEMS, PAAN_ITEMS, MORNING_ITEMS_DISPLAY
+                if item in GODOWN_ITEMS:      grp = "🟢 Godown"
+                elif item in PAAN_ITEMS:      grp = "🌿 Paan"
+                elif item in MORNING_ITEMS_DISPLAY: grp = "⬛ Morning"
+                else:                         grp = "🔵 Market"
+
+                c1,c2,c3,c4,c5 = st.columns([3,1,1,1,1])
                 with c1:
-                    label = "🔵 Market" if itype == 'market' else "🟢 Local"
-                    st.write(f"**{item}** {label}")
+                    st.write(f"**{item}** {grp}")
                     if order.get('window_type') == 'night':
                         st.caption("🌙 Night order")
                 with c2:
                     st.write(f"Qty: **{order['quantity']}**")
                 with c3:
-                    pass
+                    if price:
+                        st.write(f"Rs {price*order['quantity']:,.0f}")
                 with c4:
                     st.caption(f"{order.get('order_date','')}")
                 with c5:
@@ -187,33 +198,6 @@ def show_orders(today):
                         st.success(f"Fulfilled {item}!")
                         st.rerun()
 
-            # 📝 show extra notes once per shop
-            extras = [o for o in shop_orders if o['item_name'] == '__EXTRA__']
-            for e in extras:
-                if e.get('extra_note'):
-                    st.info(f"📝 Extra note: {e['extra_note']}")
-                    
-    st.divider()
-    st.markdown("### 💰 Cost Summary (Admin Only)")
-
-    total = 0
-
-    for shop, shop_orders in orders_by_shop.items():
-        shop_total = 0
-        for o in shop_orders:
-            if o['item_name'] == '__EXTRA__':
-                continue
-            price = MARKET_ITEMS.get(o['item_name'], 0)
-            shop_total += price * o['quantity']
-
-        if shop_total > 0:
-            st.write(f"**{shop}** → ₹{shop_total:,.0f}")
-            total += shop_total
-
-    st.markdown(f"### 🧾 Grand Total: ₹{total:,.0f}")
-
-    # copy-friendly
-    st.code(f"Total Cost: ₹{total:,.0f}")
 
 # ── Staff & Salary ─────────────────────────────────────
 def show_staff(today):
@@ -403,12 +387,13 @@ def show_pdf(today):
                 price = MARKET_ITEMS.get(item['item_name'],0)
                 cost = price * item['quantity']
                 total_cost += cost
-                st.write(f"  • {item['item_name']}: {item['quantity']}")
-        
+                st.write(f"  • {item['item_name']}: {item['quantity']} — Rs {cost:,.0f}")
+        if total_cost:
+            st.metric("Total Market Cost", f"Rs {total_cost:,.0f}")
 
     st.divider()
     if st.button("📄 Generate PDF", use_container_width=True, type="primary"):
-        pdf_bytes = generate_restock_pdf(orders)
+        pdf_bytes = generate_restock_pdf(orders, show_costs=True)
         st.download_button("⬇️ Download PDF", data=pdf_bytes,
                            file_name=f"restock_{date_from}_to_{date_to}.pdf",
                            mime="application/pdf", use_container_width=True)

@@ -1,5 +1,7 @@
+import os
 import sqlite3
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime
+import streamlit as st
 
 DB_PATH = "paan_manager.db"
 
@@ -40,6 +42,9 @@ GODOWN_ITEMS = [
     'टिन / मसाला', 'चेरी', 'खजूर', 'शिवा',
     'मघई बॉक्स', 'केसर', 'टिशू', 'कप', 'कपड़ा', 'कथा',
 ]
+
+# Morning packing items (Tin/Cover/Katha) — shown separately
+MORNING_ITEMS_DISPLAY = ['टिन', 'टिन / मसाला', 'पार्सल कवर', 'कथा']
 
 # For backward compatibility
 LOCAL_ITEMS = PAAN_ITEMS + GODOWN_ITEMS
@@ -126,9 +131,9 @@ def init_db():
         order_date TEXT NOT NULL,
         order_time TEXT,
         window_type TEXT DEFAULT "day",
+        extra_note TEXT,
         fulfilled INTEGER DEFAULT 0,
-        fulfilled_date TEXT,
-        extra_note TEXT
+        fulfilled_date TEXT
     )''')
 
     c.execute('''CREATE TABLE IF NOT EXISTS expenses (
@@ -492,27 +497,30 @@ def get_all_stock():
 
 # ── Restock Orders ─────────────────────────────────────
 def place_restock_order(shop_name, items_dict, window_type="day", extra_note=""):
+    """items_dict: {item_name: quantity}"""
     conn = get_connection()
     c = conn.cursor()
-    from datetime import datetime as dt
-    now = dt.now().isoformat()
+    from datetime import datetime as dt, timedelta
+    now_ist = (dt.utcnow() + timedelta(hours=5, minutes=30)).isoformat()
     today = str(date.today())
-
-    # insert items (ONLY ONCE)
     for item, qty in items_dict.items():
         if qty and float(qty) > 0:
-            c.execute("""INSERT INTO restock_orders 
-                         (shop_name, item_name, quantity, order_date, order_time, window_type)
-                         VALUES (?,?,?,?,?,?)""",
-                      (shop_name, item, float(qty), today, now, window_type))
-
-    # extra note
-    if extra_note and extra_note.strip():
-        c.execute("""INSERT INTO restock_orders 
-                     (shop_name, item_name, quantity, order_date, order_time, window_type, extra_note) 
+            c.execute("""INSERT INTO restock_orders
+                         (shop_name, item_name, quantity, order_date, order_time, window_type, extra_note)
+                         VALUES (?,?,?,?,?,?,?)""",
+                      (shop_name, item, float(qty), today, now_ist, window_type, extra_note))
+    # Save extra note as a special row if no items but note exists
+    if extra_note and extra_note.strip() and not items_dict:
+        c.execute("""INSERT INTO restock_orders
+                     (shop_name, item_name, quantity, order_date, order_time, window_type, extra_note)
                      VALUES (?,?,?,?,?,?,?)""",
-                  (shop_name, '__EXTRA__', 0, today, now, window_type, extra_note.strip()))
-
+                  (shop_name, '__EXTRA__', 0, today, now_ist, window_type, extra_note.strip()))
+    elif extra_note and extra_note.strip():
+        # Also save extra note row alongside items
+        c.execute("""INSERT INTO restock_orders
+                     (shop_name, item_name, quantity, order_date, order_time, window_type, extra_note)
+                     VALUES (?,?,?,?,?,?,?)""",
+                  (shop_name, '__EXTRA__', 0, today, now_ist, window_type, extra_note.strip()))
     conn.commit()
     conn.close()
 
@@ -561,28 +569,24 @@ def get_monthly_expenses(shop_name, month, year):
 
 # ── Order Time Window ──────────────────────────────────
 def is_order_window_open():
-    now = (datetime.utcnow() + timedelta(hours=5, minutes=30)).time()
-    
-        
-    day_start = time(10, 0)
-    day_end   = time(18, 40)
-
-    night_start = time(0, 0)
-    night_end   = time(4, 0)
-
-    # day window
-    if day_start <= now <= day_end:
-        return True, "day"
-
-    # night window (midnight logic)
-    if now >= night_start and now <= night_end:
-        return True, "night"
-
-    return False, None
+    """Returns (is_open, window_type) where window_type is 'day', 'night', or None"""
+    from datetime import datetime, timedelta
+    # Use IST (UTC+5:30) — Streamlit Cloud runs on UTC
+    now = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    current = now.hour * 60 + now.minute
+    day_start   = 10 * 60       # 10:00
+    day_end     = 18 * 60 + 40  # 18:40
+    night_start = 0             # 00:00
+    night_end   = 4 * 60        # 04:00
+    if day_start <= current <= day_end:
+        return (True, "day")
+    if night_start <= current <= night_end:
+        return (True, "night")
+    return (False, None)
 
 def next_window_time():
-    from datetime import datetime
-    now = datetime.now()
+    from datetime import datetime, timedelta
+    now = datetime.utcnow() + timedelta(hours=5, minutes=30)
     h = now.hour
     if 4 < h < 10:
         return "10:00 AM"

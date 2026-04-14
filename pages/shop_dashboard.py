@@ -9,17 +9,9 @@ from database import (
     get_monthly_salary, get_staff,
     is_order_window_open, next_window_time,
     save_daily_usage, get_approx_stock,
-    PAAN_ITEMS, GODOWN_ITEMS, LOCAL_ITEMS, MARKET_ITEMS, ALL_ITEMS
+    PAAN_ITEMS, GODOWN_ITEMS, LOCAL_ITEMS, MARKET_ITEMS, ALL_ITEMS,
+    MORNING_ITEMS_DISPLAY
 )
-
-IGNORE_ITEMS = [
-    'टिन','खजूर','पार्सल कवर','गुलाब','मस्त','डार्क','शिव',
-    'चेरी','टूथपिक','सफ़ेद','मैंगो','पिस्ता','स्ट्रॉबेरी','ब्लू बेरी','जेली',
-    'खजूर बॉक्स','खड़ा खजूर','खजूर मसाला','अंजीर','ड्राय फ्रूट',
-    'मघई बॉक्स','टिशू','कप','कपडा','कथा'
-]
-
-KEEP_ITEMS = ['टिन','कथा']
 
 def show():
     if not st.session_state.get("user"):
@@ -149,45 +141,30 @@ def show_stock(shop):
 
     with tab1:
         if stock:
+            stock_dict_view = {s['item_name']: s for s in stock}
+            # Group by visual category — UI only, no DB changes
+            godown_stock  = [(s['item_name'], s['quantity']) for s in stock if s['item_name'] in GODOWN_ITEMS]
+            paan_stock    = [(s['item_name'], s['quantity']) for s in stock if s['item_name'] in PAAN_ITEMS]
+            morning_stock = [(s['item_name'], s['quantity']) for s in stock if s['item_name'] in MORNING_ITEMS_DISPLAY]
+            market_stock  = [(s['item_name'], s['quantity']) for s in stock
+                             if s['item_name'] not in GODOWN_ITEMS
+                             and s['item_name'] not in PAAN_ITEMS
+                             and s['item_name'] not in MORNING_ITEMS_DISPLAY]
 
-            all_items = [(s['item_name'], s['quantity']) for s in stock]
+            def render_group(label, items):
+                if not items:
+                    return
+                st.write(f"**{label}**")
+                cols = st.columns(4)
+                for i, (name, qty) in enumerate(items):
+                    with cols[i%4]:
+                        color = "🔴" if qty == 0 else ("🟡" if qty < 5 else "🟢")
+                        st.metric(name, f"{color} {qty:.0f}")
 
-            local_items = []
-            market_items = []
-            tin_items = []
-
-            for name, qty in all_items:
-                name = name.strip()
-
-                if name in KEEP_ITEMS:
-                    tin_items.append((name, qty))
-                elif name in IGNORE_ITEMS:
-                    local_items.append((name, qty))
-                else:
-                    market_items.append((name, qty))
-
-            # optional clean look
-            local_items.sort()
-            market_items.sort()
-            tin_items.sort()
-
-            c1, c2, c3 = st.columns(3)
-
-            with c1:
-                st.write("### 🟢 Local")
-                for name, qty in local_items:
-                    st.write(f"{name}: **{qty}**")
-
-            with c2:
-                st.write("### 🔵 Market")
-                for name, qty in market_items:
-                    st.write(f"{name}: **{qty}**")
-
-            with c3:
-                st.write("### 🟤 Tin / Katha")
-                for name, qty in tin_items:
-                    st.write(f"{name}: **{qty}**")
-
+            render_group("🟢 Godown / गोदाम", godown_stock)
+            if paan_stock:    render_group("🌿 Paan / पान", paan_stock)
+            if morning_stock: render_group("⬛ Tin / Cover / Katha", morning_stock)
+            if market_stock:  render_group("🔵 Market / मार्केट", market_stock)
         else:
             st.info("No stock set yet.")
 
@@ -232,69 +209,48 @@ def show_restock(shop, today):
         st.success("✅ Order window open until 6:40 PM")
 
     with st.form("restock_form"):
-        local_order = {}
+        st.write("**🟢 Godown Items / गोदाम**")
+        godown_order = {}
+        cols = st.columns(3)
+        for i, item in enumerate(GODOWN_ITEMS):
+            with cols[i%3]:
+                godown_order[item] = st.number_input(item, min_value=0.0, step=1.0, key=f"ro_g_{item}")
+
+        st.write("**🌿 Paan Items / पान**")
+        paan_order = {}
+        cols2 = st.columns(3)
+        for i, item in enumerate(PAAN_ITEMS):
+            with cols2[i%3]:
+                paan_order[item] = st.number_input(item, min_value=0.0, step=1.0, key=f"ro_p_{item}")
+
+        st.write("**🔵 Market Items / मार्केट**")
         market_order = {}
-        tin_order = {}
+        cols3 = st.columns(3)
+        for i, item in enumerate(MARKET_ITEMS.keys()):
+            with cols3[i%3]:
+                market_order[item] = st.number_input(item, min_value=0.0, step=1.0, key=f"ro_m_{item}")
 
-        # 👉 combine all items
-        all_items = list(dict.fromkeys(list(LOCAL_ITEMS) + list(MARKET_ITEMS.keys())))
+        st.write("**⬛ Tin / Cover / Katha**")
+        morning_order = {}
+        cols4 = st.columns(4)
+        for i, item in enumerate(MORNING_ITEMS_DISPLAY):
+            with cols4[i%4]:
+                morning_order[item] = st.number_input(item, min_value=0.0, step=1.0, key=f"ro_k_{item}")
 
-        # 👉 classify (same as PDF)
-        local_items = []
-        market_items = []
-        tin_items = []
+        st.divider()
+        extra = st.text_area("📝 Extra / अतिरिक्त (anything else)", height=70,
+                              placeholder="Type any extra items or notes here...")
 
-        for item in all_items:
-            item = item.strip()
-
-            if item in KEEP_ITEMS:
-                tin_items.append(item)
-            elif item in IGNORE_ITEMS:
-                local_items.append(item)
-            else:
-                market_items.append(item)
-                
-        local_items.sort()
-        market_items.sort()
-        tin_items.sort()
-                
-        st.write("### 🟢 Local Items")
-
-        cols = st.columns(3)
-        for i, item in enumerate(local_items):
-            with cols[i % 3]:
-                local_order[item] = st.number_input(
-                    item, min_value=0.0, step=1.0, key=f"ro_l_{item}"
-                )
-                
-        st.write("### 🔵 Market Items")
-
-        cols = st.columns(3)
-        for i, item in enumerate(market_items):
-            with cols[i % 3]:
-                market_order[item] = st.number_input(
-                    item, min_value=0.0, step=1.0, key=f"ro_m_{item}"
-                )
-            
-        st.write("### 🟤 Tin / Katha")
-
-        cols = st.columns(3)
-        for i, item in enumerate(tin_items):
-            with cols[i % 3]:
-                tin_order[item] = st.number_input(
-                    item, min_value=0.0, step=1.0, key=f"ro_t_{item}"
-                ) 
-                    
-        extra = st.text_area("Extra / अतिरिक्त आइटम (type anything)", height=80, key="extra_items")
         if st.form_submit_button("📤 Place Order / ऑर्डर दें", use_container_width=True):
-            all_orders = {
-                k: v for k, v in {**local_order, **market_order, **tin_order}.items() if v > 0
-            }
-            if all_orders:
-                place_restock_order(shop, all_orders, window_type, extra_note=extra)
-                st.success(f"✅ Order placed for {len(all_orders)} items!")
+            all_orders = {k: v for k, v in
+                          {**godown_order, **paan_order, **market_order, **morning_order}.items()
+                          if v > 0}
+            if all_orders or extra.strip():
+                place_restock_order(shop, all_orders, window_type, extra_note=extra.strip())
+                st.success(f"✅ Order placed for {len(all_orders)} items!" +
+                           (" + extra note added" if extra.strip() else ""))
             else:
-                st.warning("Enter at least one item.")
+                st.warning("Enter at least one item or extra note.")
 
 
 def show_expenses(shop, today):
