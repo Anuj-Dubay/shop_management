@@ -149,11 +149,45 @@ def show_stock(shop):
 
     with tab1:
         if stock:
-            import pandas as pd
-            df = pd.DataFrame(stock)[['item_name','item_type','quantity','updated_at']]
-            df.columns = ['Item','Type','Qty','Updated']
-            df['Type'] = df['Type'].map({'local':'🟢 Local','market':'🔵 Market'})
-            st.dataframe(df, use_container_width=True)
+
+            all_items = [(s['item_name'], s['quantity']) for s in stock]
+
+            local_items = []
+            market_items = []
+            tin_items = []
+
+            for name, qty in all_items:
+                name = name.strip()
+
+                if name in KEEP_ITEMS:
+                    tin_items.append((name, qty))
+                elif name in IGNORE_ITEMS:
+                    local_items.append((name, qty))
+                else:
+                    market_items.append((name, qty))
+
+            # optional clean look
+            local_items.sort()
+            market_items.sort()
+            tin_items.sort()
+
+            c1, c2, c3 = st.columns(3)
+
+            with c1:
+                st.write("### 🟢 Local")
+                for name, qty in local_items:
+                    st.write(f"{name}: **{qty}**")
+
+            with c2:
+                st.write("### 🔵 Market")
+                for name, qty in market_items:
+                    st.write(f"{name}: **{qty}**")
+
+            with c3:
+                st.write("### 🟤 Tin / Katha")
+                for name, qty in tin_items:
+                    st.write(f"{name}: **{qty}**")
+
         else:
             st.info("No stock set yet.")
 
