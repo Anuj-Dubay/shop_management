@@ -1,0 +1,15 @@
+.streamlit/secrets.toml
+.env
+
+*.db
+*.sqlite
+*.sqlite3
+
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+.vscode/
+.DS_Store
+Thumbs.db
