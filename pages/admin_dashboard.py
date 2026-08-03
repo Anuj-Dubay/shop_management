@@ -362,13 +362,44 @@ def show_pdf(today):
         st.warning("No orders for selected filters.")
         return
 
-    if st.button("📄 Generate PDF", use_container_width=True, type="primary"):
-        pdf_bytes = generate_restock_pdf(orders, show_costs=True)
-        st.download_button("⬇️ Download PDF", data=pdf_bytes,
+    # Separate market orders to calculate cost
+    market_orders = [o for o in orders if o['item_name'] in MARKET_ITEMS]
+    
+    # Calculate cost per shop
+    cost_by_shop = {}
+    total_cost = 0
+    for o in market_orders:
+        price = MARKET_ITEMS.get(o['item_name'], 0)
+        cost = price * o['quantity']
+        if cost > 0:
+            cost_by_shop[o['shop_name']] = cost_by_shop.get(o['shop_name'], 0) + cost
+            total_cost += cost
+
+    # --- GENERATE PDF BUTTON ---
+    if st.button("📄 Generate PDF & View Cost Summary", use_container_width=True, type="primary"):
+        # 1. Generate PDF (show_costs=False so shops don't see money)
+        pdf_bytes = generate_restock_pdf(orders, show_costs=False)
+        
+        st.download_button("⬇️ Download PDF (For Shops)", data=pdf_bytes,
                            file_name=f"restock_{date_from}_to_{date_to}.pdf",
                            mime="application/pdf", use_container_width=True)
-        st.success("PDF Generated Successfully!")
-
+        
+        # 2. Print Cost Summary for Admin Only (with Copy Button!)
+        st.divider()
+        st.subheader("🤫 Admin Cost Summary (Not visible to shops)")
+        
+        summary_text = ""
+        summary_text += "=" * 30 + "\n"
+        summary_text += "COST SUMMARY\n"
+        summary_text += "=" * 30 + "\n"
+        for shop, cost in cost_by_shop.items():
+            summary_text += f"{shop:<15} ₹ {cost:,.0f}\n"
+        summary_text += "-" * 30 + "\n"
+        summary_text += f"{'TOTAL':<15} ₹ {total_cost:,.0f}\n"
+        summary_text += "=" * 30
+        
+        # st.code provides a convenient "Copy" button in the top right
+        st.code(summary_text, language='text')
 
 # ── Monthly Report ─────────────────────────────────────
 def show_monthly_report(today):

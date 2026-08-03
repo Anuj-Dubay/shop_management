@@ -8,7 +8,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 # ─────────────────────────────────────────────
 #  CONFIG
 # ─────────────────────────────────────────────
-@st.cache_resource
+
 def get_connection():
     url = st.secrets["SUPABASE_DB_URL"]
     conn = psycopg2.connect(url, cursor_factory=RealDictCursor)

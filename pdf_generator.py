@@ -27,10 +27,7 @@ def generate_restock_pdf(orders, show_costs=True):
                 cost = MARKET_ITEMS.get(item, 0) * qty
                 total_cost += cost
                 
-                text = f"{item} - {qty}"
-                if show_costs and mode_title == "MARKET ITEMS" and cost > 0:
-                    text += f" (₹{cost:,.0f})"
-                    
+                text = f"{item} - {qty}"    
                 html += f'<div class="item">{text}</div>'
                 
             for o in filtered_orders:
