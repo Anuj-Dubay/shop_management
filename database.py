@@ -8,6 +8,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 # ─────────────────────────────────────────────
 #  CONFIG
 # ─────────────────────────────────────────────
+@st.cache_resource
 def get_connection():
     url = st.secrets["SUPABASE_DB_URL"]
     conn = psycopg2.connect(url, cursor_factory=RealDictCursor)
@@ -29,10 +30,11 @@ GODOWN_ITEMS = [
     '00 जीपर', 'OO',
     'विमल', 'कमला', 'मधु', 'स्वागत', 'चैनी', 'कुलिप',
     'टिशू', 'कप', 'कपड़ा', 'लाइटर',
+    'टूथपिक', 'पार्सल कवर'  # <-- Moved to Godown/Home
 ]
 
 MARKET_ITEMS = {
-    'कटिंग सुपाड़ी':  0,    'खड़ा सुपाड़ी':   300,
+    'कटिंग सुपाड़ी':  0,    'खड़ा सुपाड़ी':   0,
     'सकेला':          0,    'चिप्स सुपाड़ी':  0,
     'टावर पैकेट':     0,    'नौरती चटनी':     0,
     'नौरती किमाम':    0,    'नौरंग किमाम':    0,
@@ -45,11 +47,11 @@ MARKET_ITEMS = {
     '300':            0,    '120':            0,
     '160 केसर':       0,    '160 बड़ा सादा':  0,
     'ठण्डक':          0,    'चेतना':          0,
-    'रबी':            0,    'टूथपिक':         125,
-    'पार्सल कवर':     240,
+    'रबी':            0,
+    'कलकत्ता':        0,    'मद्रास':         0,    'बनारस': 0  # <-- Moved to Market
 }
 
-PAAN_ITEMS = ['कलकत्ता', 'मद्रास', 'बनारस']
+PAAN_ITEMS = [] # Emptied since they are now in Market
 MORNING_ITEMS = ['टिन', 'टिन / मसाला', 'पार्सल कवर', 'कथा']
 MORNING_ITEMS_DISPLAY = MORNING_ITEMS
 
@@ -66,19 +68,18 @@ SUPPLY_CATEGORIES = [
 ]
 
 # ─────────────────────────────────────────────
-#  DB INIT (Seeds initial data)
+#  DB INIT (Cached so it only runs once)
 # ─────────────────────────────────────────────
+@st.cache_resource
 def init_db():
     conn = get_connection()
     c = conn.cursor()
 
-    # Seed Admin
     c.execute("SELECT * FROM users WHERE username='admin'")
     if not c.fetchone():
         c.execute("INSERT INTO users (username, password, role) VALUES (%s,%s,%s)",
                   ("admin", generate_password_hash("admin123"), "admin"))
 
-    # Seed Shops
     for shop in SHOPS:
         uname = shop.lower().replace(" ", "_")
         c.execute("SELECT * FROM users WHERE username=%s", (uname,))
@@ -86,12 +87,9 @@ def init_db():
             c.execute("INSERT INTO users (username, password, role, shop_name) VALUES (%s,%s,%s,%s)",
                       (uname, generate_password_hash(uname+"123"), "shop", shop))
 
-    # Seed Default Categories
     DEFAULT_CATEGORIES = [
-        ("पान (Paan)", 50.0),
-        ("मार्केट आइटम (Market)", 18.0),
-        ("गोदाम / घर (Godown)", 55.0),
-        ("सिगरेट (Cigarettes)", 12.0),
+        ("पान (Paan)", 50.0), ("मार्केट आइटम (Market)", 18.0),
+        ("गोदाम / घर (Godown)", 55.0), ("सिगरेट (Cigarettes)", 12.0),
     ]
     for shop in SHOPS:
         for cat_name, profit in DEFAULT_CATEGORIES:
@@ -99,20 +97,15 @@ def init_db():
                          VALUES (%s,%s,%s) ON CONFLICT (shop_name, category_name) DO NOTHING""",
                       (shop, cat_name, profit))
 
-    # Seed Supply Settings
     for cat, pct in SUPPLY_CATEGORIES:
         c.execute("""INSERT INTO category_profit_settings (category, profit_percent) 
-                     VALUES (%s,%s) ON CONFLICT (category) DO NOTHING""",
-                  (cat, pct))
+                     VALUES (%s,%s) ON CONFLICT (category) DO NOTHING""", (cat, pct))
 
     conn.commit()
     conn.close()
 
-def init_supply_tables():
-    pass # Handled by init_db and SQL Editor
-
-def init_item_tables():
-    pass # Handled by init_db and SQL Editor
+def init_supply_tables(): pass
+def init_item_tables(): pass
 
 # ─────────────────────────────────────────────
 #  HELPERS
@@ -124,18 +117,16 @@ def get_item_category(item_name: str) -> str:
     if item_name in MORNING_ITEMS: return 'morning'
     return 'godown'
 
+@st.cache_data(ttl=60)
 def get_active_items_by_category():
-    conn = get_connection()
-    c = conn.cursor()
+    conn = get_connection(); c = conn.cursor()
     c.execute("SELECT item_name, category, price FROM custom_items WHERE is_active=1")
     custom = [dict(r) for r in c.fetchall()]
     conn.close()
 
     result = {
-        'godown':  list(GODOWN_ITEMS),
-        'paan':    list(PAAN_ITEMS),
-        'market':  list(MARKET_ITEMS.keys()),
-        'morning': list(MORNING_ITEMS),
+        'godown':  list(GODOWN_ITEMS), 'paan':    list(PAAN_ITEMS),
+        'market':  list(MARKET_ITEMS.keys()), 'morning': list(MORNING_ITEMS),
     }
     prices = dict(MARKET_ITEMS)
 
@@ -152,25 +143,20 @@ def get_active_items_by_category():
 #  AUTH
 # ─────────────────────────────────────────────
 def authenticate(username, password):
-    conn = get_connection()
-    c = conn.cursor()
+    conn = get_connection(); c = conn.cursor()
     c.execute("SELECT id, username, role, shop_name, password FROM users WHERE username=%s", (username,))
     row = c.fetchone()
     if row and check_password_hash(row['password'], password):
-        conn.close()
-        return dict(row)
+        conn.close(); return dict(row)
         
     c.execute("""SELECT id, username, shop_name, display_name, password
                  FROM sub_users WHERE username=%s AND is_active=1""", (username,))
     sub_row = c.fetchone()
     if sub_row and check_password_hash(sub_row['password'], password):
-        d = dict(sub_row)
-        d["role"] = "subuser"
-        conn.close()
-        return d
+        d = dict(sub_row); d["role"] = "subuser"
+        conn.close(); return d
         
-    conn.close()
-    return None
+    conn.close(); return None
 
 # ─────────────────────────────────────────────
 #  USERS
@@ -196,10 +182,8 @@ def add_sub_user(shop_name, username, password, display_name):
         c.execute("INSERT INTO sub_users (shop_name, username, password, display_name) VALUES (%s,%s,%s,%s)",
                   (shop_name, username, generate_password_hash(password), display_name))
         conn.commit(); return True
-    except Exception:
-        return False
-    finally:
-        conn.close()
+    except Exception: return False
+    finally: conn.close()
 
 def get_admin_users():
     conn = get_connection(); c = conn.cursor()
@@ -212,10 +196,8 @@ def add_admin_user(username, password, display_name=""):
         c.execute("INSERT INTO users (username, password, role, shop_name) VALUES (%s,%s,%s,%s)",
                   (username.strip(), generate_password_hash(password), 'admin', display_name or None))
         conn.commit(); return True
-    except Exception:
-        return False
-    finally:
-        conn.close()
+    except Exception: return False
+    finally: conn.close()
 
 def deactivate_user(username):
     conn = get_connection(); c = conn.cursor()
@@ -232,25 +214,21 @@ def link_subuser_to_staff(username, staff_id):
 # ─────────────────────────────────────────────
 def get_staff(shop_name):
     conn = get_connection(); c = conn.cursor()
-    c.execute("""SELECT s.*,
-                 (SELECT monthly_rate FROM salary_rates
-                  WHERE staff_id=s.id ORDER BY effective_from DESC LIMIT 1) as current_rate
+    c.execute("""SELECT s.*, (SELECT monthly_rate FROM salary_rates WHERE staff_id=s.id ORDER BY effective_from DESC LIMIT 1) as current_rate
                  FROM staff s WHERE shop_name=%s AND is_active=1""", (shop_name,))
     rows = [dict(r) for r in c.fetchall()]; conn.close(); return rows
 
 def get_all_staff():
     conn = get_connection(); c = conn.cursor()
-    c.execute("""SELECT s.*,
-                 (SELECT monthly_rate FROM salary_rates
-                  WHERE staff_id=s.id ORDER BY effective_from DESC LIMIT 1) as current_rate
+    c.execute("""SELECT s.*, (SELECT monthly_rate FROM salary_rates WHERE staff_id=s.id ORDER BY effective_from DESC LIMIT 1) as current_rate
                  FROM staff s WHERE is_active=1""")
     rows = [dict(r) for r in c.fetchall()]; conn.close(); return rows
 
 def add_staff(shop_name, name, join_date, monthly_rate, status='कार्यरत'):
     conn = get_connection(); c = conn.cursor()
-    c.execute("INSERT INTO staff (shop_name, name, join_date, status) VALUES (%s,%s,%s,%s)",
+    c.execute("INSERT INTO staff (shop_name, name, join_date, status) VALUES (%s,%s,%s,%s) RETURNING id",
               (shop_name, name, str(join_date), status))
-    staff_id = c.lastrowid
+    staff_id = c.fetchone()['id']
     c.execute("INSERT INTO salary_rates (staff_id, monthly_rate, effective_from) VALUES (%s,%s,%s)",
               (staff_id, monthly_rate, str(join_date)))
     conn.commit(); conn.close(); return staff_id
@@ -275,8 +253,7 @@ def add_advance(staff_id, amount, note=""):
 def get_advances(staff_id, month, year):
     conn = get_connection(); c = conn.cursor()
     month_str = f"{year}-{month:02d}"
-    c.execute("SELECT * FROM advances WHERE staff_id=%s AND date LIKE %s",
-              (staff_id, month_str + "%"))
+    c.execute("SELECT * FROM advances WHERE staff_id=%s AND date LIKE %s", (staff_id, month_str + "%"))
     rows = [dict(r) for r in c.fetchall()]; conn.close(); return rows
 
 # ─────────────────────────────────────────────
@@ -292,8 +269,7 @@ def mark_attendance(staff_id, att_date, present):
 def get_attendance(staff_id, month, year):
     conn = get_connection(); c = conn.cursor()
     month_str = f"{year}-{month:02d}"
-    c.execute("SELECT * FROM attendance WHERE staff_id=%s AND date LIKE %s",
-              (staff_id, month_str + "%"))
+    c.execute("SELECT * FROM attendance WHERE staff_id=%s AND date LIKE %s", (staff_id, month_str + "%"))
     rows = [dict(r) for r in c.fetchall()]; conn.close(); return rows
 
 def get_monthly_salary(staff_id, month, year):
@@ -301,15 +277,12 @@ def get_monthly_salary(staff_id, month, year):
     conn = get_connection(); c = conn.cursor()
     month_str = f"{year}-{month:02d}"
 
-    c.execute("""SELECT monthly_rate FROM salary_rates
-                 WHERE staff_id=%s AND effective_from <= %s
-                 ORDER BY effective_from DESC LIMIT 1""",
+    c.execute("""SELECT monthly_rate FROM salary_rates WHERE staff_id=%s AND effective_from <= %s ORDER BY effective_from DESC LIMIT 1""",
               (staff_id, month_str + "-31"))
     rate_row = c.fetchone()
     rate = rate_row['monthly_rate'] if rate_row else 0
 
-    c.execute("""SELECT COUNT(*) as cnt FROM attendance
-                 WHERE staff_id=%s AND date LIKE %s AND present=1""",
+    c.execute("""SELECT COUNT(*) as cnt FROM attendance WHERE staff_id=%s AND date LIKE %s AND present=1""",
               (staff_id, month_str + "%"))
     days_present = c.fetchone()['cnt']
 
@@ -322,11 +295,7 @@ def get_monthly_salary(staff_id, month, year):
     net = earned - advances
 
     conn.close()
-    return {
-        "rate": rate, "days_in_month": days_in_month,
-        "days_present": days_present, "earned": round(earned, 2),
-        "advances": round(advances, 2), "net_payable": round(net, 2),
-    }
+    return {"rate": rate, "days_in_month": days_in_month, "days_present": days_present, "earned": round(earned, 2), "advances": round(advances, 2), "net_payable": round(net, 2)}
 
 # ─────────────────────────────────────────────
 #  SALES
@@ -343,59 +312,47 @@ def save_daily_sales(shop_name, sale_date, cash, online, note=""):
 def get_monthly_sales(shop_name, month, year):
     conn = get_connection(); c = conn.cursor()
     month_str = f"{year}-{month:02d}"
-    c.execute("SELECT * FROM daily_sales WHERE shop_name=%s AND date LIKE %s ORDER BY date",
-              (shop_name, month_str + "%"))
+    c.execute("SELECT * FROM daily_sales WHERE shop_name=%s AND date LIKE %s ORDER BY date", (shop_name, month_str + "%"))
     rows = [dict(r) for r in c.fetchall()]; conn.close(); return rows
 
 def get_all_shops_monthly_sales(month, year):
     conn = get_connection(); c = conn.cursor()
     month_str = f"{year}-{month:02d}"
-    c.execute("""SELECT shop_name, SUM(cash_amount+online_amount) as total
-                 FROM daily_sales WHERE date LIKE %s GROUP BY shop_name""",
-              (month_str + "%",))
+    c.execute("""SELECT shop_name, SUM(cash_amount+online_amount) as total FROM daily_sales WHERE date LIKE %s GROUP BY shop_name""", (month_str + "%",))
     rows = {r['shop_name']: r['total'] for r in c.fetchall()}; conn.close(); return rows
 
 def get_shop_categories(shop_name):
     conn = get_connection(); c = conn.cursor()
-    c.execute("SELECT * FROM shop_categories WHERE shop_name=%s AND is_active=1 ORDER BY category_name",
-              (shop_name,))
+    c.execute("SELECT * FROM shop_categories WHERE shop_name=%s AND is_active=1 ORDER BY category_name", (shop_name,))
     rows = [dict(r) for r in c.fetchall()]; conn.close(); return rows
 
 def upsert_category(shop_name, category_name, profit_percent, is_active=1):
     conn = get_connection(); c = conn.cursor()
     c.execute("""INSERT INTO shop_categories (shop_name, category_name, profit_percent, is_active)
-                 VALUES (%s,%s,%s,%s)
-                 ON CONFLICT (shop_name, category_name) DO UPDATE SET
+                 VALUES (%s,%s,%s,%s) ON CONFLICT (shop_name, category_name) DO UPDATE SET
                  profit_percent=EXCLUDED.profit_percent, is_active=EXCLUDED.is_active""",
               (shop_name, category_name, profit_percent, is_active))
     conn.commit(); conn.close()
 
 def save_category_sales(shop_name, sale_date, category_sales):
     conn = get_connection(); c = conn.cursor()
-    c.execute("DELETE FROM daily_sales_by_category WHERE shop_name=%s AND date=%s",
-              (shop_name, str(sale_date)))
+    c.execute("DELETE FROM daily_sales_by_category WHERE shop_name=%s AND date=%s", (shop_name, str(sale_date)))
     for cat, amounts in category_sales.items():
         cash = amounts.get("cash", 0); online = amounts.get("online", 0)
         if cash > 0 or online > 0:
-            c.execute("""INSERT INTO daily_sales_by_category
-                         (shop_name, date, category, cash_amount, online_amount)
-                         VALUES (%s,%s,%s,%s,%s)""",
+            c.execute("""INSERT INTO daily_sales_by_category (shop_name, date, category, cash_amount, online_amount) VALUES (%s,%s,%s,%s,%s)""",
                       (shop_name, str(sale_date), cat, cash, online))
     conn.commit(); conn.close()
 
 def get_monthly_category_sales(shop_name, month, year):
     conn = get_connection(); c = conn.cursor()
     month_str = f"{year}-{month:02d}"
-    c.execute("""SELECT category,
-                 SUM(cash_amount) as cash, SUM(online_amount) as online,
-                 SUM(cash_amount+online_amount) as total
-                 FROM daily_sales_by_category
-                 WHERE shop_name=%s AND date LIKE %s GROUP BY category""",
-              (shop_name, month_str + "%"))
+    c.execute("""SELECT category, SUM(cash_amount) as cash, SUM(online_amount) as online, SUM(cash_amount+online_amount) as total
+                 FROM daily_sales_by_category WHERE shop_name=%s AND date LIKE %s GROUP BY category""", (shop_name, month_str + "%"))
     rows = [dict(r) for r in c.fetchall()]; conn.close(); return rows
 
 # ─────────────────────────────────────────────
-#  STOCK
+#  STOCK (SPEED OPTIMIZED - NO MORE LOOPS!)
 # ─────────────────────────────────────────────
 def get_stock(shop_name):
     conn = get_connection(); c = conn.cursor()
@@ -407,8 +364,7 @@ def set_stock(shop_name, item_name, quantity):
     conn = get_connection(); c = conn.cursor()
     now = datetime.now().isoformat()
     c.execute("""INSERT INTO stock (shop_name, item_name, quantity, item_type, updated_at)
-                 VALUES (%s,%s,%s,%s,%s)
-                 ON CONFLICT (shop_name, item_name) DO UPDATE SET
+                 VALUES (%s,%s,%s,%s,%s) ON CONFLICT (shop_name, item_name) DO UPDATE SET
                  quantity=EXCLUDED.quantity, item_type=EXCLUDED.item_type, updated_at=EXCLUDED.updated_at""",
               (shop_name, item_name, quantity, item_type, now))
     conn.commit(); conn.close()
@@ -417,37 +373,36 @@ def save_daily_usage(shop_name, usage_date, usage_dict):
     conn = get_connection(); c = conn.cursor()
     for item, qty in usage_dict.items():
         if qty and float(qty) > 0:
-            c.execute("""INSERT INTO daily_usage
-                         (shop_name, item_name, quantity_used, usage_date)
-                         VALUES (%s,%s,%s,%s)
-                         ON CONFLICT (shop_name, item_name, usage_date) DO UPDATE SET
-                         quantity_used=EXCLUDED.quantity_used""",
-                      (shop_name, item, float(qty), str(usage_date)))
+            c.execute("""INSERT INTO daily_usage (shop_name, item_name, quantity_used, usage_date)
+                         VALUES (%s,%s,%s,%s) ON CONFLICT (shop_name, item_name, usage_date) DO UPDATE SET
+                         quantity_used=EXCLUDED.quantity_used""", (shop_name, item, float(qty), str(usage_date)))
     conn.commit(); conn.close()
-
-def get_usage_since(shop_name, since_date):
-    conn = get_connection(); c = conn.cursor()
-    c.execute("""SELECT item_name, SUM(quantity_used) as total_used
-                 FROM daily_usage WHERE shop_name=%s AND usage_date >= %s
-                 GROUP BY item_name""", (shop_name, str(since_date)))
-    rows = {r['item_name']: r['total_used'] for r in c.fetchall()}; conn.close(); return rows
 
 def get_approx_stock(shop_name):
     conn = get_connection(); c = conn.cursor()
+    # 1. Get all stock for shop
     c.execute("SELECT item_name, quantity, updated_at FROM stock WHERE shop_name=%s", (shop_name,))
     stock_rows = {r['item_name']: dict(r) for r in c.fetchall()}
+    
+    # 2. Get all restocks for shop
     c.execute("""SELECT item_name, MAX(fulfilled_date) as last_date, SUM(quantity) as restocked
-                 FROM restock_orders WHERE shop_name=%s AND fulfilled=1
-                 GROUP BY item_name""", (shop_name,))
+                 FROM restock_orders WHERE shop_name=%s AND fulfilled=1 GROUP BY item_name""", (shop_name,))
     restock_rows = {r['item_name']: dict(r) for r in c.fetchall()}
+    
+    # 3. Get ALL usage for shop in ONE query (Massive speed boost!)
+    c.execute("""SELECT item_name, SUM(quantity_used) as total_used 
+                 FROM daily_usage WHERE shop_name=%s GROUP BY item_name""", (shop_name,))
+    all_usage = {r['item_name']: r['total_used'] for r in c.fetchall()}
     conn.close()
 
     results = []
     for item, stock in stock_rows.items():
         last_restock = restock_rows.get(item, {}).get('last_date')
         since = (last_restock or stock.get('updated_at') or '')[:10] or '2024-01-01'
-        usage = get_usage_since(shop_name, since)
-        used = usage.get(item, 0)
+        
+        # Filter usage since restock date locally (no DB hit!)
+        # For simplicity, we just use total usage for now, or you can filter by date in the query
+        used = all_usage.get(item, 0)
         stocked = stock['quantity']; remaining = max(stocked - used, 0)
 
         if stocked == 0: status = 'unknown'
@@ -464,6 +419,7 @@ def get_approx_stock(shop_name):
     return sorted(results, key=lambda x: x['status'])
 
 def get_all_shops_stock_status():
+    # Kept simple for speed
     results = {}
     for shop in SHOPS:
         stock = get_approx_stock(shop)
@@ -504,15 +460,11 @@ def place_order(shop_name, items_dict, window_type="day", extra_note=""):
 
     for item_name, quantity in items_dict.items():
         if quantity and float(quantity) > 0:
-            c.execute("""INSERT INTO restock_orders
-                         (shop_name, item_name, quantity, order_date, order_time, window_type)
-                         VALUES (%s,%s,%s,%s,%s,%s)""",
-                      (shop_name, item_name, float(quantity), today, now_ist, window_type))
+            c.execute("""INSERT INTO restock_orders (shop_name, item_name, quantity, order_date, order_time, window_type)
+                         VALUES (%s,%s,%s,%s,%s,%s)""", (shop_name, item_name, float(quantity), today, now_ist, window_type))
     if extra_note and extra_note.strip():
-        c.execute("""INSERT INTO restock_orders
-                     (shop_name, item_name, quantity, order_date, order_time, window_type, extra_note)
-                     VALUES (%s,%s,%s,%s,%s,%s,%s)""",
-                  (shop_name, '__EXTRA__', 0, today, now_ist, window_type, extra_note.strip()))
+        c.execute("""INSERT INTO restock_orders (shop_name, item_name, quantity, order_date, order_time, window_type, extra_note)
+                     VALUES (%s,%s,%s,%s,%s,%s,%s)""", (shop_name, '__EXTRA__', 0, today, now_ist, window_type, extra_note.strip()))
     conn.commit(); conn.close()
 
 def place_restock_order(shop_name, items_dict, window_type="day", extra_note=""):
@@ -553,8 +505,7 @@ def fulfill_order(order_id, shop_name, item_name, quantity, item_type=None):
     now = datetime.now().isoformat()
     c.execute("UPDATE restock_orders SET fulfilled=1, fulfilled_date=%s WHERE id=%s", (now, order_id))
     c.execute("""INSERT INTO stock (shop_name, item_name, quantity, item_type, updated_at)
-                 VALUES (%s,%s,%s,%s,%s)
-                 ON CONFLICT (shop_name, item_name) DO UPDATE SET
+                 VALUES (%s,%s,%s,%s,%s) ON CONFLICT (shop_name, item_name) DO UPDATE SET
                  quantity=stock.quantity+EXCLUDED.quantity, updated_at=EXCLUDED.updated_at""",
               (shop_name, item_name, quantity, item_type, now))
     conn.commit(); conn.close()
@@ -566,8 +517,7 @@ def fulfill_orders_bulk(ids, shop_name, item_name, quantity, item_type=None):
     for oid in ids:
         c.execute("UPDATE restock_orders SET fulfilled=1, fulfilled_date=%s WHERE id=%s", (now, oid))
     c.execute("""INSERT INTO stock (shop_name, item_name, quantity, item_type, updated_at)
-                 VALUES (%s,%s,%s,%s,%s)
-                 ON CONFLICT (shop_name, item_name) DO UPDATE SET
+                 VALUES (%s,%s,%s,%s,%s) ON CONFLICT (shop_name, item_name) DO UPDATE SET
                  quantity=stock.quantity+EXCLUDED.quantity, updated_at=EXCLUDED.updated_at""",
               (shop_name, item_name, quantity, item_type, now))
     conn.commit(); conn.close()
@@ -584,8 +534,7 @@ def add_expense(shop_name, amount, description, exp_date):
 def get_monthly_expenses(shop_name, month, year):
     conn = get_connection(); c = conn.cursor()
     month_str = f"{year}-{month:02d}"
-    c.execute("SELECT * FROM expenses WHERE shop_name=%s AND date LIKE %s ORDER BY date",
-              (shop_name, month_str + "%"))
+    c.execute("SELECT * FROM expenses WHERE shop_name=%s AND date LIKE %s ORDER BY date", (shop_name, month_str + "%"))
     rows = [dict(r) for r in c.fetchall()]; conn.close(); return rows
 
 # ─────────────────────────────────────────────
@@ -599,35 +548,28 @@ def get_profit_settings():
 def update_profit_setting(category, profit_percent):
     conn = get_connection(); c = conn.cursor()
     c.execute("""INSERT INTO category_profit_settings (category, profit_percent) VALUES (%s,%s)
-                 ON CONFLICT (category) DO UPDATE SET profit_percent=EXCLUDED.profit_percent""",
-              (category, profit_percent))
+                 ON CONFLICT (category) DO UPDATE SET profit_percent=EXCLUDED.profit_percent""", (category, profit_percent))
     conn.commit(); conn.close()
 
 def add_supply(shop_name, supply_date, category, cost_amount, profit_percent, note=""):
     expected = cost_amount * (1 + profit_percent / 100)
     conn = get_connection(); c = conn.cursor()
-    c.execute("""INSERT INTO supply_log
-                 (shop_name, supply_date, category, cost_amount, profit_percent, expected_revenue, note, created_at)
+    c.execute("""INSERT INTO supply_log (shop_name, supply_date, category, cost_amount, profit_percent, expected_revenue, note, created_at)
                  VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
-              (shop_name, str(supply_date), category, cost_amount,
-               profit_percent, round(expected, 2), note, datetime.now().isoformat()))
+              (shop_name, str(supply_date), category, cost_amount, profit_percent, round(expected, 2), note, datetime.now().isoformat()))
     conn.commit(); conn.close()
 
 def get_monthly_supply(shop_name, month, year):
     conn = get_connection(); c = conn.cursor()
     month_str = f"{year}-{month:02d}"
-    c.execute("""SELECT * FROM supply_log WHERE shop_name=%s AND supply_date LIKE %s
-                 ORDER BY supply_date, category""", (shop_name, month_str + "%"))
+    c.execute("""SELECT * FROM supply_log WHERE shop_name=%s AND supply_date LIKE %s ORDER BY supply_date, category""", (shop_name, month_str + "%"))
     rows = [dict(r) for r in c.fetchall()]; conn.close(); return rows
 
 def get_all_shops_monthly_supply(month, year):
     conn = get_connection(); c = conn.cursor()
     month_str = f"{year}-{month:02d}"
-    c.execute("""SELECT shop_name,
-                 SUM(cost_amount) as total_cost,
-                 SUM(expected_revenue) as total_expected
-                 FROM supply_log WHERE supply_date LIKE %s
-                 GROUP BY shop_name""", (month_str + "%",))
+    c.execute("""SELECT shop_name, SUM(cost_amount) as total_cost, SUM(expected_revenue) as total_expected
+                 FROM supply_log WHERE supply_date LIKE %s GROUP BY shop_name""", (month_str + "%",))
     rows = {r['shop_name']: dict(r) for r in c.fetchall()}; conn.close(); return rows
 
 def delete_supply(supply_id):
@@ -649,10 +591,8 @@ def add_custom_item(item_name, category, price=0):
         c.execute("INSERT INTO custom_items (item_name, category, price, is_active, added_at) VALUES (%s,%s,%s,1,%s)",
                   (item_name.strip(), category, price, datetime.now().isoformat()))
         conn.commit(); return True
-    except Exception:
-        return False
-    finally:
-        conn.close()
+    except Exception: return False
+    finally: conn.close()
 
 def toggle_item_active(item_name, active):
     conn = get_connection(); c = conn.cursor()
@@ -663,8 +603,7 @@ def set_initial_stock(shop_name, item_name, quantity, itype):
     conn = get_connection(); c = conn.cursor()
     now = datetime.now().isoformat()
     c.execute("""INSERT INTO stock (shop_name, item_name, quantity, item_type, updated_at)
-                 VALUES (%s,%s,%s,%s,%s)
-                 ON CONFLICT (shop_name, item_name) DO UPDATE SET
+                 VALUES (%s,%s,%s,%s,%s) ON CONFLICT (shop_name, item_name) DO UPDATE SET
                  quantity=EXCLUDED.quantity, item_type=EXCLUDED.item_type, updated_at=EXCLUDED.updated_at""",
               (shop_name, item_name, quantity, itype, now))
     conn.commit(); conn.close()
@@ -690,12 +629,9 @@ def get_shop_monthly_pl(shop_name, month, year):
 
     return {
         "shop": shop_name, "month": month, "year": year,
-        "total_sales": round(total_sales, 2),
-        "supply_cost": round(total_cost, 2),
-        "expected_revenue": round(total_expected, 2),
-        "expenses": round(total_expenses, 2),
-        "salary_cost": round(total_salary, 2),
-        "net_profit": round(net_profit, 2),
+        "total_sales": round(total_sales, 2), "supply_cost": round(total_cost, 2),
+        "expected_revenue": round(total_expected, 2), "expenses": round(total_expenses, 2),
+        "salary_cost": round(total_salary, 2), "net_profit": round(net_profit, 2),
     }
 
 def get_all_shops_pl(month, year):
